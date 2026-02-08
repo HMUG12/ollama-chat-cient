@@ -167,20 +167,17 @@ class OllamaChatGUI:
             try:
                 response = requests.get(f"{self.base_url}/api/tags", timeout=5)
                 if response.status_code == 200:
-                    self.status_label.configure(
-                        text="状态: 已连接 ✅",
-                        text_color="lightgreen"
+                    self.window.after(0, self.status_label.configure,
+                        {"text": "状态: 已连接 ✅", "text_color": "lightgreen"}
                     )
                     self.add_message("system", "系统", "已连接到Ollama，可以开始对话了！")
                 else:
-                    self.status_label.configure(
-                        text="状态: 连接失败 ❌",
-                        text_color="red"
+                    self.window.after(0, self.status_label.configure,
+                        {"text": "状态: 连接失败 ❌", "text_color": "red"}
                     )
             except requests.RequestException:
-                self.status_label.configure(
-                    text="状态: Ollama未运行 ❌",
-                    text_color="red"
+                self.window.after(0, self.status_label.configure,
+                    {"text": "状态: Ollama未运行 ❌", "text_color": "red"}
                 )
                 self.add_message("system", "系统",
                                  "无法连接到Ollama，请确保Ollama服务正在运行。\n"
@@ -196,6 +193,7 @@ class OllamaChatGUI:
     def refresh_models(self):
         """刷新模型列表"""
         models = self.get_available_models()
+        self._cached_models = models
         self.model_dropdown.configure(values=models)
         if models:
             self.model_dropdown.set(models[0])
