@@ -1,6 +1,5 @@
 import customtkinter as ctk
 import threading
-import json
 import time
 from tkinter import scrolledtext
 import requests
@@ -19,10 +18,14 @@ class OllamaChatGUI:
 
         # Ollama配置
         self.base_url = "http://localhost:11434"  # Ollama默认地址
-        self.current_model = self.get_available_models()[0] if self.get_available_models() else ""
+        self._cached_models = self.get_available_models()
+        self.current_model = self._cached_models[0] if self._cached_models else ""
 
-        # 对话历史
+        # 对话历史（用于 /api/chat 多轮对话）
         self.conversation_history: List[Dict] = []
+
+        # 是否正在等待AI回复
+        self._waiting_response = False
 
         self.setup_ui()
         self.test_connection()
@@ -53,7 +56,7 @@ class OllamaChatGUI:
         self.model_var = ctk.StringVar(value=self.current_model)
         self.model_dropdown = ctk.CTkComboBox(
             sidebar_frame,
-            values=self.get_available_models(),
+            values=self._cached_models,
             variable=self.model_var,
             command=self.change_model
         )
@@ -68,7 +71,7 @@ class OllamaChatGUI:
         refresh_btn.grid(row=3, column=0, padx=20, pady=10)
 
         # 清除对话按钮
-        clear_btn = ctk.CTkButton(
+        self.clear_btn = ctk.CTkButton(
             sidebar_frame,
             text="清除对话",
             fg_color="transparent",
@@ -76,7 +79,7 @@ class OllamaChatGUI:
             text_color=("gray10", "#DCE4EE"),
             command=self.clear_conversation
         )
-        clear_btn.grid(row=4, column=0, padx=20, pady=10)
+        self.clear_btn.grid(row=4, column=0, padx=20, pady=10)
 
         # 退出按钮
         exit_btn = ctk.CTkButton(
@@ -111,6 +114,14 @@ class OllamaChatGUI:
         )
         self.conversation_text.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
+        # 预设文字样式标签（避免每次添加消息时重复配置）
+        self.conversation_text.tag_config("timestamp_user", foreground="#4CAF50", font=("Arial", 10, "bold"))
+        self.conversation_text.tag_config("message_user", foreground="white", font=("Microsoft YaHei", 11))
+        self.conversation_text.tag_config("timestamp_assistant", foreground="#2196F3", font=("Arial", 10, "bold"))
+        self.conversation_text.tag_config("message_assistant", foreground="white", font=("Microsoft YaHei", 11))
+        self.conversation_text.tag_config("timestamp_system", foreground="#FF9800", font=("Arial", 10, "bold"))
+        self.conversation_text.tag_config("message_system", foreground="white", font=("Microsoft YaHei", 11))
+
         # 底部输入区域
         bottom_frame = ctk.CTkFrame(main_frame)
         bottom_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
@@ -121,26 +132,31 @@ class OllamaChatGUI:
         self.input_text.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
         # 发送按钮
-        send_btn = ctk.CTkButton(
+        self.send_btn = ctk.CTkButton(
             bottom_frame,
             text="发送",
             width=100,
             command=self.send_message
         )
-        send_btn.grid(row=0, column=1)
+        self.send_btn.grid(row=0, column=1)
 
-        # 绑定回车键发送
-        self.input_text.bind("<Return>", lambda e: "break")  # 禁用默认回车行为
-        self.input_text.bind("<Control-Return>", self.send_message_event)
+        # 绑定快捷键：Enter 发送，Shift+Enter 换行
+        self.input_text.bind("<Return>", self._on_enter)
+        self.input_text.bind("<Shift-Return>", lambda e: None)  # 允许换行
+
+    def _on_enter(self, event=None):
+        """Enter 键发送消息"""
+        self.send_message()
+        return "break"  # 阻止插入换行符
 
     def get_available_models(self):
         """获取可用的Ollama模型"""
         try:
-            response = requests.get(f"{self.base_url}/api/tags")
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 models = response.json().get("models", [])
                 return [model["name"] for model in models]
-        except:
+        except (requests.RequestException, ValueError, KeyError):
             pass
         return ["llama2", "mistral", "codellama"]  # 默认模型列表
 
@@ -149,22 +165,19 @@ class OllamaChatGUI:
 
         def test():
             try:
-                response = requests.get(f"{self.base_url}/api/tags")
+                response = requests.get(f"{self.base_url}/api/tags", timeout=5)
                 if response.status_code == 200:
-                    self.status_label.configure(
-                        text="状态: 已连接 ✅",
-                        text_color="lightgreen"
+                    self.window.after(0, self.status_label.configure,
+                        {"text": "状态: 已连接 ✅", "text_color": "lightgreen"}
                     )
                     self.add_message("system", "系统", "已连接到Ollama，可以开始对话了！")
                 else:
-                    self.status_label.configure(
-                        text="状态: 连接失败 ❌",
-                        text_color="red"
+                    self.window.after(0, self.status_label.configure,
+                        {"text": "状态: 连接失败 ❌", "text_color": "red"}
                     )
-            except Exception as e:
-                self.status_label.configure(
-                    text="状态: Ollama未运行 ❌",
-                    text_color="red"
+            except requests.RequestException:
+                self.window.after(0, self.status_label.configure,
+                    {"text": "状态: Ollama未运行 ❌", "text_color": "red"}
                 )
                 self.add_message("system", "系统",
                                  "无法连接到Ollama，请确保Ollama服务正在运行。\n"
@@ -180,6 +193,7 @@ class OllamaChatGUI:
     def refresh_models(self):
         """刷新模型列表"""
         models = self.get_available_models()
+        self._cached_models = models
         self.model_dropdown.configure(values=models)
         if models:
             self.model_dropdown.set(models[0])
@@ -193,19 +207,18 @@ class OllamaChatGUI:
         self.conversation_text.configure(state="disabled")
         self.add_message("system", "系统", "对话历史已清除")
 
-    def send_message_event(self, event=None):
-        """事件绑定的发送消息"""
-        self.send_message()
-        return "break"  # 阻止默认行为
-
     def send_message(self):
         """发送消息"""
+        if self._waiting_response:
+            return
+
         message = self.input_text.get("1.0", "end-1c").strip()
         if not message or not self.current_model:
             return
 
-        # 清空输入框
+        # 清空输入框并禁用发送按钮
         self.input_text.delete("1.0", "end")
+        self._set_sending_state(True)
 
         # 显示用户消息
         self.add_message("user", "你", message)
@@ -213,51 +226,81 @@ class OllamaChatGUI:
         # 发送到Ollama
         threading.Thread(target=self.get_ai_response, args=(message,), daemon=True).start()
 
+    def _update_connection_status(self, connected: bool, error_msg: str = ""):
+        """根据实际连接结果更新状态标签"""
+        if connected:
+            self.status_label.configure(text="状态: 已连接 ✅", text_color="lightgreen")
+        elif error_msg:
+            self.status_label.configure(text=f"状态: {error_msg}", text_color="red")
+        else:
+            self.status_label.configure(text="状态: 未连接 ❌", text_color="red")
+
+    def _set_sending_state(self, sending: bool, connected: bool = True, error_msg: str = ""):
+        """设置发送状态，防止重复发送"""
+        self._waiting_response = sending
+        if sending:
+            self.send_btn.configure(state="disabled", text="等待中...")
+            self.clear_btn.configure(state="disabled")
+            self.status_label.configure(text="状态: AI思考中...", text_color="yellow")
+        else:
+            self.send_btn.configure(state="normal", text="发送")
+            self.clear_btn.configure(state="normal")
+            self._update_connection_status(connected, error_msg)
+
     def get_ai_response(self, message):
-        """获取AI响应"""
+        """获取AI响应（使用 /api/chat 支持多轮对话）"""
+        connected = True
+        error_msg = ""
         try:
-            # 准备请求数据
+            # 将用户消息加入历史
+            self.conversation_history.append({
+                "role": "user",
+                "content": message
+            })
+
+            # 构建请求时对历史做快照，避免与主线程竞争
+            messages_snapshot = list(self.conversation_history)
+
             data = {
                 "model": self.current_model,
-                "prompt": message,
-                "stream": False,
-                "context": self.get_context()
+                "messages": messages_snapshot,
+                "stream": False
             }
 
-            # 发送请求
             response = requests.post(
-                f"{self.base_url}/api/generate",
+                f"{self.base_url}/api/chat",
                 json=data,
                 timeout=300
             )
 
             if response.status_code == 200:
                 result = response.json()
-                ai_response = result.get("response", "")
+                ai_response = result.get("message", {}).get("content", "")
 
-                # 保存到历史
-                self.conversation_history.append({
-                    "role": "user",
-                    "content": message
-                })
+                # 将AI回复也加入历史
                 self.conversation_history.append({
                     "role": "assistant",
                     "content": ai_response
                 })
 
-                # 显示AI响应
                 self.add_message("assistant", "AI", ai_response)
             else:
+                # 请求失败，安全回滚用户消息
+                if self.conversation_history and self.conversation_history[-1].get("role") == "user":
+                    self.conversation_history.pop()
                 self.add_message("system", "系统", f"错误: {response.status_code}")
+                connected = False
+                error_msg = f"请求错误 ({response.status_code})"
 
-        except Exception as e:
+        except requests.RequestException as e:
+            # 网络异常，安全回滚用户消息
+            if self.conversation_history and self.conversation_history[-1].get("role") == "user":
+                self.conversation_history.pop()
             self.add_message("system", "系统", f"请求失败: {str(e)}")
-
-    def get_context(self):
-        """获取对话上下文（简化版本）"""
-        # 在实际使用中，这里应该返回对话历史
-        # 为了简化，返回空列表
-        return []
+            connected = False
+            error_msg = "连接失败 ❌"
+        finally:
+            self.window.after(0, self._set_sending_state, False, connected, error_msg)
 
     def add_message(self, sender, name, message):
         """添加消息到对话框"""
@@ -270,15 +313,12 @@ class OllamaChatGUI:
         # 添加时间戳
         timestamp = time.strftime("%H:%M:%S")
 
-        # 设置颜色和格式
+        # 设置消息前缀图标
         if sender == "user":
-            tag_color = "#4CAF50"  # 绿色
             prefix = "👤"
         elif sender == "assistant":
-            tag_color = "#2196F3"  # 蓝色
             prefix = "🤖"
         else:
-            tag_color = "#FF9800"  # 橙色
             prefix = "⚙️"
 
         # 插入消息
@@ -289,10 +329,6 @@ class OllamaChatGUI:
         # 滚动到底部
         self.conversation_text.see("end")
         self.conversation_text.configure(state="disabled")
-
-        # 配置标签
-        self.conversation_text.tag_config(f"timestamp_{sender}", foreground=tag_color, font=("Arial", 10, "bold"))
-        self.conversation_text.tag_config(f"message_{sender}", foreground="white", font=("Microsoft YaHei", 11))
 
     def run(self):
         """运行应用"""

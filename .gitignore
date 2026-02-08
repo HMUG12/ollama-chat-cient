@@ -126,6 +126,7 @@ dmypy.log
 # System files
 .DS_Store
 Thumbs.db
+.shortcut_created
 
 # audio / recording / temporary
 *.wav
