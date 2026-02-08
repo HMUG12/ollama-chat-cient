@@ -8,9 +8,7 @@ import subprocess
 import sys
 import os
 import time
-import threading
 import webbrowser
-from pathlib import Path
 
 
 def check_ollama_running():
@@ -19,7 +17,7 @@ def check_ollama_running():
         import requests
         response = requests.get("http://localhost:11434/api/tags", timeout=2)
         return response.status_code == 200
-    except:
+    except Exception:
         return False
 
 
@@ -27,10 +25,9 @@ def start_ollama_service():
     """启动Ollama服务"""
     print("正在启动Ollama服务...")
 
-    # 尝试不同的启动方式
+    # 启动 Ollama 服务
     startup_commands = [
         ["ollama", "serve"],  # 标准方式
-        ["ollama", "run", "llama2"],  # 另一种方式
     ]
 
     for cmd in startup_commands:
@@ -55,17 +52,17 @@ def start_ollama_service():
     return None
 
 
-def open_browser_if_needed():
-    """如果需要，打开浏览器到Ollama WebUI"""
+def open_ollama_download_page():
+    """打开Ollama下载页面"""
     try:
-        webbrowser.open("http://localhost:11434")
-    except:
+        webbrowser.open("https://ollama.com")
+    except Exception:
         pass
 
 
 def check_dependencies():
     """检查依赖"""
-    required_packages = ["customtkinter", "requests", "pillow"]
+    required_packages = ["customtkinter", "requests"]
     missing = []
 
     for package in required_packages:
@@ -112,8 +109,8 @@ def create_shortcut():
 
             target = sys.executable
             wDir = os.path.dirname(os.path.abspath(__file__))
-            icon = os.path.join(wDir, "assets", "icon.ico") if os.path.exists(
-                os.path.join(wDir, "assets", "icon.ico")) else None
+            icon_path = os.path.join(wDir, "assets", "icon.ico")
+            icon = icon_path if os.path.exists(icon_path) else None
 
             shell = Dispatch('WScript.Shell')
             shortcut = shell.CreateShortCut(path)
@@ -124,9 +121,11 @@ def create_shortcut():
                 shortcut.IconLocation = icon
             shortcut.save()
 
-            print(f"已在桌面创建快捷方式")
-        except:
-            pass  # 忽略创建快捷方式失败
+            print("已在桌面创建快捷方式")
+        except ImportError:
+            pass  # winshell 或 pywin32 未安装，跳过
+        except Exception as e:
+            print(f"创建快捷方式失败: {e}")
 
 
 def main():
@@ -163,12 +162,12 @@ def main():
                 print("请确保已安装Ollama:")
                 print("1. 访问 https://ollama.com 下载安装")
                 print("2. 在终端运行: ollama serve")
-                open_browser_if_needed()
+                open_ollama_download_page()
         else:
             print("请手动启动Ollama:")
             print("1. 打开终端/命令提示符")
             print("2. 运行: ollama serve")
-            open_browser_if_needed()
+            open_ollama_download_page()
     else:
         print("✅ Ollama服务已在运行")
 
