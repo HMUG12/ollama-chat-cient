@@ -18,3 +18,9 @@ bilbil未知之致
 
 
 目前ollama chat client功能并不是很稳定，请勿用于生产力环境。
+
+
+特别鸣谢：
+
+
+c浅忆QanYi
