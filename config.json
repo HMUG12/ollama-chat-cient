@@ -1,0 +1,5 @@
+{
+  "api_server_enabled": false,
+  "api_server_port": 5000,
+  "current_model": "llama2"
+}
