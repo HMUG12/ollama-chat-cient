@@ -200,12 +200,9 @@ pyinstaller --onefile --windowed main.py
 ## 许可证
 
 本项目采用 MIT 许可证。
-=======
-目前ollama chat client功能并不是很稳定，请勿用于生产力环境。
 
 
-特别鸣谢：
 
 
-浅忆QanYi
+
 >>>>>>> 254039b1cc15304f7d3f956c9e593d56740d663d
