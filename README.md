@@ -23,7 +23,7 @@ Ollama Chat Client 是一个基于本地 Ollama 服务的聊天客户端，支�
 ### 1. 环境要求
 
 - Python 3.8 或更高版本
-- （可选）本地已安装并运行 Ollama 服务
+- 本地已安装并运行 Ollama 服务
 
 ### 2. 启动方式
 
