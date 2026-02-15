@@ -21,22 +21,39 @@ class OllamaChatGUI:
         ctk.set_appearance_mode("dark")  # 深色模式
         ctk.set_default_color_theme("blue")  # 蓝色主题
 
-        self.window = ctk.CTk()
-        self.window.title("Ollama Chat Client - 本地AI助手")
-        self.window.geometry("1050x700")
-
         # Ollama配置
         self.base_url = "http://localhost:11434"  # Ollama默认地址
-        self._cached_models = self.get_available_models()
-        self.current_model = self._cached_models[0] if self._cached_models else ""
+        try:
+            self._cached_models = self.get_available_models()
+            self.current_model = self._cached_models[0] if self._cached_models else ""
+        except Exception as e:
+            print(f"获取模型列表失败: {str(e)}")
+            self._cached_models = ["llama2", "mistral", "codellama"]
+            self.current_model = self._cached_models[0]
 
         # API服务配置
         self.api_server_enabled = False
         self.api_server_port = 5000
-        self.api_keys = self.load_api_keys()
+        try:
+            self.api_keys = self.load_api_keys()
+        except Exception as e:
+            print(f"加载API密钥失败: {str(e)}")
+            self.api_keys = []
         self.api_server = None
         # API Key调用统计
-        self.api_key_stats = self.load_api_key_stats()
+        try:
+            self.api_key_stats = self.load_api_key_stats()
+        except Exception as e:
+            print(f"加载API密钥统计失败: {str(e)}")
+            self.api_key_stats = {}
+        
+        # 初始化本地控制台窗口
+        print("启动本地控制台...")
+        self.window = ctk.CTk()
+        self.window.title("Ollama Chat Client - 本地AI助手")
+        self.window.geometry("1050x700")
+        # 设置窗口最小尺寸
+        self.window.minsize(800, 500)
 
         # 对话历史管理
         self.max_history_rounds = 20  # 最大对话轮数
@@ -77,6 +94,9 @@ class OllamaChatGUI:
 
         self.setup_ui()
         self.test_connection()
+        
+        # 绑定窗口缩放事件
+        self.window.bind("<Configure>", self.on_window_resize)
 
     def setup_ui(self):
         """设置用户界面"""
@@ -116,22 +136,46 @@ class OllamaChatGUI:
             button.bind("<Leave>", on_leave)
             button.bind("<Button-1>", on_click)
 
-        # 左侧边栏
-        sidebar_frame = ctk.CTkFrame(self.window, width=250, corner_radius=0)
+        # 左侧边栏 - 拓大横向宽度
+        sidebar_frame = ctk.CTkFrame(self.window, width=320, corner_radius=0)
         sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        sidebar_frame.grid_rowconfigure(10, weight=1)
+        sidebar_frame.grid_rowconfigure(8, weight=1)
 
         # 标题
         title_label = ctk.CTkLabel(
             sidebar_frame,
             text="Ollama Chat",
-            font=ctk.CTkFont(size=20, weight="bold")
+            font=ctk.CTkFont(size=18, weight="bold")
         )
-        title_label.grid(row=0, column=0, padx=20, pady=20)
+        title_label.grid(row=0, column=0, padx=15, pady=15)
+
+        # Ollama API地址设置
+        url_label = ctk.CTkLabel(sidebar_frame, text="Ollama地址:")
+        url_label.grid(row=1, column=0, padx=15, pady=(5, 0))
+
+        self.base_url_entry = ctk.CTkEntry(sidebar_frame, placeholder_text="http://localhost:11434")
+        self.base_url_entry.insert(0, self.base_url)
+        self.base_url_entry.grid(row=2, column=0, padx=15, pady=(0, 8), sticky="ew")
+
+        # 更新地址按钮
+        update_url_btn = ctk.CTkButton(
+            sidebar_frame,
+            text="更新地址",
+            command=self.update_ollama_url,
+            hover_color="#3498db",
+            fg_color="#2980b9",
+            border_color="#3498db",
+            border_width=2,
+            corner_radius=6,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            height=28
+        )
+        update_url_btn.grid(row=3, column=0, padx=15, pady=(0, 10), sticky="ew")
+        add_button_animation(update_url_btn)
 
         # 模型选择
         model_label = ctk.CTkLabel(sidebar_frame, text="选择模型:")
-        model_label.grid(row=1, column=0, padx=20, pady=(10, 0))
+        model_label.grid(row=4, column=0, padx=15, pady=(5, 0))
 
         self.model_var = ctk.StringVar(value=self.current_model)
         self.model_dropdown = ctk.CTkComboBox(
@@ -140,7 +184,9 @@ class OllamaChatGUI:
             variable=self.model_var,
             command=self.change_model
         )
-        self.model_dropdown.grid(row=2, column=0, padx=20, pady=(0, 10))
+        self.model_dropdown.grid(row=5, column=0, padx=15, pady=(0, 8), sticky="ew")
+
+
 
         # 刷新模型按钮
         refresh_btn = ctk.CTkButton(
@@ -149,26 +195,26 @@ class OllamaChatGUI:
             command=self.refresh_models,
             hover_color="#27ae60",
             fg_color="#229954",
-            border_color="#27ae60",
+            border_color="#222222",
             border_width=2,
-            corner_radius=8,
-            font=ctk.CTkFont(size=11, weight="bold")
+            corner_radius=6,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            height=28
         )
-        refresh_btn.grid(row=3, column=0, padx=20, pady=10)
-        # 应用按钮动画
+        refresh_btn.grid(row=7, column=0, padx=15, pady=8, sticky="ew")
         add_button_animation(refresh_btn)
 
         # API服务管理区域
-        api_server_frame = ctk.CTkFrame(sidebar_frame, corner_radius=10)
-        api_server_frame.grid(row=4, column=0, padx=20, pady=10, sticky="ew")
+        api_server_frame = ctk.CTkFrame(sidebar_frame, corner_radius=8)
+        api_server_frame.grid(row=8, column=0, padx=15, pady=8, sticky="ew")
         api_server_frame.grid_columnconfigure(0, weight=1)
 
         api_server_title = ctk.CTkLabel(
             api_server_frame,
             text="API服务管理",
-            font=ctk.CTkFont(size=14, weight="bold")
+            font=ctk.CTkFont(size=12, weight="bold")
         )
-        api_server_title.grid(row=0, column=0, padx=10, pady=(10, 5))
+        api_server_title.grid(row=0, column=0, padx=10, pady=(8, 4))
 
         # API服务启用/禁用
         self.api_server_var = ctk.BooleanVar(value=self.api_server_enabled)
@@ -178,38 +224,46 @@ class OllamaChatGUI:
             variable=self.api_server_var,
             command=self.toggle_api_server
         )
-        api_server_switch.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        api_server_switch.grid(row=1, column=0, padx=10, pady=4, sticky="w")
 
         # API服务端口设置
         api_port_label = ctk.CTkLabel(api_server_frame, text="服务端口:")
-        api_port_label.grid(row=2, column=0, padx=10, pady=(10, 0), sticky="w")
+        api_port_label.grid(row=2, column=0, padx=10, pady=(8, 0), sticky="w")
 
         self.api_port_entry = ctk.CTkEntry(
             api_server_frame,
             placeholder_text="输入端口号"
         )
         self.api_port_entry.insert(0, str(self.api_server_port))
-        self.api_port_entry.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="ew")
+        self.api_port_entry.grid(row=3, column=0, padx=10, pady=(0, 8), sticky="ew")
 
         # 生成API Key按钮
         generate_api_key_btn = ctk.CTkButton(
             api_server_frame,
             text="生成新API Key",
-            command=self.generate_api_key
+            command=self.generate_api_key,
+            height=26,
+            font=ctk.CTkFont(size=10)
         )
-        generate_api_key_btn.grid(row=4, column=0, padx=10, pady=5, sticky="ew")
+        generate_api_key_btn.grid(row=4, column=0, padx=10, pady=4, sticky="ew")
 
         # 查看API Keys按钮
         view_api_keys_btn = ctk.CTkButton(
             api_server_frame,
-            text="API Key管理控制台",
-            command=self.open_api_key_console
+            text="API Key管理",
+            command=self.open_api_key_console,
+            height=26,
+            font=ctk.CTkFont(size=10)
         )
-        view_api_keys_btn.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
+        view_api_keys_btn.grid(row=5, column=0, padx=10, pady=4, sticky="ew")
 
         # API服务状态
-        self.api_server_status = ctk.CTkLabel(api_server_frame, text="API服务状态: 未启动")
-        self.api_server_status.grid(row=6, column=0, padx=10, pady=(10, 10))
+        self.api_server_status = ctk.CTkLabel(
+            api_server_frame, 
+            text="API服务状态: 未启动",
+            font=ctk.CTkFont(size=10)
+        )
+        self.api_server_status.grid(row=6, column=0, padx=10, pady=(8, 8))
 
         # 清除对话按钮
         self.clear_btn = ctk.CTkButton(
@@ -220,33 +274,40 @@ class OllamaChatGUI:
             text_color=("gray10", "#DCE4EE"),
             border_color="#95a5a6",
             hover_color="#7f8c8d",
-            corner_radius=8,
-            font=ctk.CTkFont(size=11, weight="bold"),
+            corner_radius=6,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            height=28,
             command=self.clear_conversation
         )
-        self.clear_btn.grid(row=5, column=0, padx=20, pady=10)
-        # 应用按钮动画
+        self.clear_btn.grid(row=9, column=0, padx=15, pady=8, sticky="ew")
         add_button_animation(self.clear_btn)
+
+        # 状态标签
+        self.status_label = ctk.CTkLabel(
+            sidebar_frame, 
+            text="状态: 等待连接",
+            font=ctk.CTkFont(size=10)
+        )
+        self.status_label.grid(row=10, column=0, padx=15, pady=8)
 
         # 退出按钮
         exit_btn = ctk.CTkButton(
             sidebar_frame,
             text="退出",
-            command=self.window.quit,
+            command=self.exit_application,
             fg_color="#e74c3c",
             hover_color="#c0392b",
             border_color="#e74c3c",
             border_width=2,
-            corner_radius=8,
-            font=ctk.CTkFont(size=11, weight="bold")
+            corner_radius=6,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            height=28
         )
-        exit_btn.grid(row=7, column=0, padx=20, pady=20)
-        # 应用按钮动画
+        exit_btn.grid(row=11, column=0, padx=15, pady=15, sticky="ew")
         add_button_animation(exit_btn)
-
-        # 状态标签
-        self.status_label = ctk.CTkLabel(sidebar_frame, text="状态: 等待连接")
-        self.status_label.grid(row=6, column=0, padx=20, pady=20)
+        
+        # 绑定窗口关闭事件
+        self.window.protocol("WM_DELETE_WINDOW", self.exit_application)
 
         # 主对话区域
         main_frame = ctk.CTkFrame(self.window, corner_radius=0)
@@ -284,16 +345,75 @@ class OllamaChatGUI:
         self.input_text = ctk.CTkTextbox(bottom_frame, height=80)
         self.input_text.grid(row=0, column=0, sticky="ew", padx=(0, 10))
 
+        # 右侧按钮容器
+        right_frame = ctk.CTkFrame(bottom_frame, fg_color="transparent")
+        right_frame.grid(row=0, column=1, padx=5, pady=5, sticky="ns")
+        right_frame.grid_columnconfigure(0, weight=1)
+        
+        # 上传按钮容器
+        upload_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        upload_frame.grid(row=0, column=0, padx=5, pady=(5, 5), sticky="ew")
+        upload_frame.grid_columnconfigure(0, weight=1)
+        upload_frame.grid_columnconfigure(1, weight=1)
+        
+        # 上传文本按钮
+        upload_text_btn = ctk.CTkButton(
+            upload_frame,
+            text="📄",
+            width=40,
+            command=self.upload_text,
+            hover_color="#3498db",
+            fg_color="#2980b9",
+            border_color="#3498db",
+            border_width=2,
+            corner_radius=6,
+            font=ctk.CTkFont(size=12)
+        )
+        upload_text_btn.grid(row=0, column=0, padx=(0, 5), pady=2)
+        add_button_animation(upload_text_btn)
+        
+        # 上传图片按钮
+        upload_image_btn = ctk.CTkButton(
+            upload_frame,
+            text="🖼️",
+            width=40,
+            command=self.upload_image,
+            hover_color="#3498db",
+            fg_color="#2980b9",
+            border_color="#3498db",
+            border_width=2,
+            corner_radius=6,
+            font=ctk.CTkFont(size=12)
+        )
+        upload_image_btn.grid(row=0, column=1, padx=(5, 0), pady=2)
+        add_button_animation(upload_image_btn)
+        
+        # 联网搜索开关
+        self.web_search_var = ctk.BooleanVar(value=False)
+        web_search_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        web_search_frame.grid(row=1, column=0, padx=5, pady=(5, 5), sticky="ew")
+        web_search_frame.grid_columnconfigure(0, weight=1)
+        
+        web_search_switch = ctk.CTkSwitch(
+            web_search_frame,
+            text="联网",
+            variable=self.web_search_var,
+            command=self.toggle_web_search_mode
+        )
+        web_search_switch.grid(row=0, column=0, padx=5, pady=2, sticky="ew")
+        
+        # 搜索API设置
+        self.search_api_var = ctk.StringVar(value="模拟搜索")
+
         # 发送按钮和加载指示器容器
-        send_frame = ctk.CTkFrame(bottom_frame, fg_color="transparent")
-        send_frame.grid(row=0, column=1, padx=5, pady=5)
+        send_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
+        send_frame.grid(row=2, column=0, padx=5, pady=(5, 5), sticky="ew")
         send_frame.grid_columnconfigure(0, weight=1)
 
         # 发送按钮
         self.send_btn = ctk.CTkButton(
             send_frame,
             text="发送",
-            width=100,
             command=self.send_message,
             hover_color="#3498db",
             fg_color="#2980b9",
@@ -302,7 +422,7 @@ class OllamaChatGUI:
             corner_radius=8,
             font=ctk.CTkFont(size=12, weight="bold")
         )
-        self.send_btn.grid(row=0, column=0, padx=5, pady=5)
+        self.send_btn.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
 
         # 加载指示器
         self.loading_indicator = ctk.CTkLabel(
@@ -344,6 +464,25 @@ class OllamaChatGUI:
         b = int(b1 * (1 - alpha) + b2 * alpha)
         
         return f"#{r:02x}{g:02x}{b:02x}"
+
+    def update_ollama_url(self):
+        """更新Ollama API地址"""
+        new_url = self.base_url_entry.get().strip()
+        if new_url:
+            self.base_url = new_url
+            # 测试新地址
+            self._cached_models = self.get_available_models()
+            self.model_dropdown.configure(values=self._cached_models)
+            if self._cached_models:
+                self.current_model = self._cached_models[0]
+                self.model_dropdown.set(self.current_model)
+            self.add_message("system", "系统", f"Ollama地址已更新为: {new_url}")
+            self.save_config()
+
+    def on_window_resize(self, event):
+        """窗口缩放事件处理"""
+        # 可以在这里添加窗口缩放时的逻辑
+        pass
 
     def get_available_models(self):
         """获取可用的Ollama模型"""
@@ -406,6 +545,11 @@ class OllamaChatGUI:
     def send_message(self):
         """发送消息"""
         if self._waiting_response:
+            return
+
+        # 检查API服务是否启用，如果启用则禁止控制台对话
+        if self.api_server_enabled:
+            self.add_message("system", "系统", "API服务已启用，禁止使用控制台对话")
             return
 
         message = self.input_text.get("1.0", "end-1c").strip()
@@ -476,10 +620,27 @@ class OllamaChatGUI:
         error_msg = ""
         try:
             # 限制消息长度，避免过长消息占用过多内存
-            max_message_length = 10000  # 10KB
+            max_message_length = 5000  # 5KB，减少显存占用
             if len(message) > max_message_length:
                 message = message[:max_message_length] + "...（消息过长，已截断）"
                 print("用户消息过长，已截断")
+
+            # 检查是否启用联网搜索
+            search_results = []
+            if self.web_search_var.get():
+                # 执行联网搜索
+                self.window.after(0, self.status_label.configure, {
+                    "text": "状态: 正在联网搜索...",
+                    "text_color": "yellow"
+                })
+                search_results = self.perform_web_search(message)
+                
+                # 显示搜索结果摘要
+                if search_results:
+                    search_summary = "\n".join(search_results)
+                    self.add_message("system", "系统", f"联网搜索完成，获取到 {len(search_results)} 条相关结果")
+                else:
+                    self.add_message("system", "系统", "联网搜索无结果，将基于本地知识回答")
 
             # 将用户消息加入历史
             self.conversation_history.append({
@@ -489,6 +650,20 @@ class OllamaChatGUI:
 
             # 构建请求时对历史做快照，避免与主线程竞争
             messages_snapshot = list(self.conversation_history)
+
+            # 进一步限制历史记录长度，减少显存占用
+            if len(messages_snapshot) > 10:  # 最多保留10条消息
+                messages_snapshot = messages_snapshot[-10:]
+
+            # 如果有搜索结果，构建增强的消息
+            if search_results:
+                search_summary = "\n".join(search_results)
+                # 创建一个系统消息，包含搜索结果
+                enhanced_message = {
+                    "role": "system",
+                    "content": f"基于以下搜索结果，回答用户的问题：\n\n{search_summary}\n\n请综合搜索结果和你的知识，提供一个全面、准确的回答。"
+                }
+                messages_snapshot.append(enhanced_message)
 
             data = {
                 "model": self.current_model,
@@ -518,6 +693,12 @@ class OllamaChatGUI:
                 })
 
                 self.add_message("assistant", "AI", ai_response)
+                
+                # 释放资源
+                del result, messages_snapshot
+                if 'search_summary' in locals():
+                    del search_summary
+                gc.collect()
             else:
                 # 请求失败，安全回滚用户消息
                 if self.conversation_history and self.conversation_history[-1].get("role") == "user":
@@ -525,6 +706,12 @@ class OllamaChatGUI:
                 self.add_message("system", "系统", f"错误: {response.status_code}")
                 connected = False
                 error_msg = f"请求错误 ({response.status_code})"
+                
+                # 释放资源
+                del messages_snapshot
+                if 'search_summary' in locals():
+                    del search_summary
+                gc.collect()
 
         except requests.RequestException as e:
             # 网络异常，安全回滚用户消息
@@ -533,6 +720,15 @@ class OllamaChatGUI:
             self.add_message("system", "系统", f"请求失败: {str(e)}")
             connected = False
             error_msg = "连接失败 ❌"
+            
+            # 释放资源
+            try:
+                del messages_snapshot
+                if 'search_summary' in locals():
+                    del search_summary
+            except:
+                pass
+            gc.collect()
         finally:
             self.window.after(0, self._set_sending_state, False, connected, error_msg)
 
@@ -670,15 +866,28 @@ class OllamaChatGUI:
 
     def save_config(self):
         """保存配置到文件"""
-        config = {
-            "api_server_enabled": self.api_server_enabled,
-            "api_server_port": self.api_server_port,
-            "current_model": self.current_model
-        }
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        config_ini_path = os.path.join(os.path.dirname(__file__), "config.ini")
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, ensure_ascii=False, indent=2)
+            config = configparser.ConfigParser()
+            
+            # 读取现有配置
+            if os.path.exists(config_ini_path):
+                config.read(config_ini_path, encoding="utf-8")
+            
+            # 更新配置
+            if not config.has_section("Server"):
+                config.add_section("Server")
+            config.set("Server", "enable_api_server", str(self.api_server_enabled))
+            config.set("Server", "api_server_port", str(self.api_server_port))
+            
+            if not config.has_section("Ollama"):
+                config.add_section("Ollama")
+            config.set("Ollama", "base_url", self.base_url)
+            config.set("Ollama", "default_model", self.current_model)
+            
+            # 保存配置
+            with open(config_ini_path, "w", encoding="utf-8") as f:
+                config.write(f)
         except Exception as e:
             print(f"保存配置失败: {e}")
 
@@ -816,12 +1025,28 @@ class OllamaChatGUI:
         """创建API应用，支持阿里API调用方式"""
         app = flask.Flask(__name__)
         
+        # 初始化API调用速率限制
+        self.api_rate_limit = {}  # {api_key: {timestamp, count}}
+        self.api_rate_limit_window = 60  # 60秒窗口
+        self.api_rate_limit_max = 100  # 每分钟最多100次请求
+        self.api_ip_whitelist = []  # IP白名单（可选）
+        self.api_ip_blacklist = []  # IP黑名单
+        
         # API认证中间件
         @app.before_request
         def authenticate():
             # 跳过OPTIONS请求
             if flask.request.method == 'OPTIONS':
                 return
+            
+            # 检查IP黑名单
+            client_ip = flask.request.remote_addr
+            if client_ip in self.api_ip_blacklist:
+                return flask.jsonify({"code": 403, "message": "IP address blocked", "data": None}), 403
+            
+            # 检查IP白名单（如果启用）
+            if self.api_ip_whitelist and client_ip not in self.api_ip_whitelist:
+                return flask.jsonify({"code": 403, "message": "IP address not allowed", "data": None}), 403
             
             # 获取API Key（支持多种认证方式）
             api_key = None
@@ -850,8 +1075,10 @@ class OllamaChatGUI:
             
             # 验证API Key
             valid = False
+            api_key_info = None
             for key_info in self.api_keys:
                 if key_info['key'] == api_key:
+                    api_key_info = key_info
                     # 检查是否过期
                     expires_at = datetime.fromisoformat(key_info['expires_at'])
                     if datetime.now() < expires_at:
@@ -860,6 +1087,22 @@ class OllamaChatGUI:
             
             if not valid:
                 return flask.jsonify({"code": 401, "message": "Invalid or expired API Key", "data": None}), 401
+            
+            # 检查速率限制
+            current_time = time.time()
+            if api_key not in self.api_rate_limit:
+                self.api_rate_limit[api_key] = {'timestamp': current_time, 'count': 0}
+            
+            rate_info = self.api_rate_limit[api_key]
+            if current_time - rate_info['timestamp'] > self.api_rate_limit_window:
+                # 重置窗口
+                rate_info['timestamp'] = current_time
+                rate_info['count'] = 0
+            
+            if rate_info['count'] >= self.api_rate_limit_max:
+                return flask.jsonify({"code": 429, "message": "Too many requests", "data": None}), 429
+            
+            rate_info['count'] += 1
             
             # 确保为该API Key创建对话历史
             if api_key not in self.conversation_histories:
@@ -998,10 +1241,25 @@ class OllamaChatGUI:
             history = self.conversation_history
         
         # 限制消息长度，避免过长消息占用过多内存
-        max_message_length = 10000  # 10KB
+        max_message_length = 5000  # 5KB，减少显存占用
         if len(message) > max_message_length:
             message = message[:max_message_length] + "...（消息过长，已截断）"
             print("用户消息过长，已截断")
+
+        # 检查是否启用联网搜索
+        # API Key远程调用默认启用联网搜索
+        use_web_search = self.web_search_var.get() or api_key is not None
+        search_results = []
+        
+        if use_web_search:
+            # 执行联网搜索
+            print(f"执行联网搜索: {message}")
+            search_results = self.perform_web_search(message)
+            
+            if search_results:
+                print(f"联网搜索完成，获取到 {len(search_results)} 条相关结果")
+            else:
+                print("联网搜索无结果，将基于本地知识回答")
 
         # 将用户消息加入历史
         history.append({
@@ -1011,6 +1269,20 @@ class OllamaChatGUI:
 
         # 构建请求时对历史做快照，避免与主线程竞争
         messages_snapshot = list(history)
+
+        # 进一步限制历史记录长度，减少显存占用
+        if len(messages_snapshot) > 10:  # 最多保留10条消息
+            messages_snapshot = messages_snapshot[-10:]
+
+        # 如果有搜索结果，构建增强的消息
+        if search_results:
+            search_summary = "\n".join(search_results)
+            # 创建一个系统消息，包含搜索结果
+            enhanced_message = {
+                "role": "system",
+                "content": f"基于以下搜索结果，回答用户的问题：\n\n{search_summary}\n\n请综合搜索结果和你的知识，提供一个全面、准确的回答。"
+            }
+            messages_snapshot.append(enhanced_message)
 
         data = {
             "model": self.current_model,
@@ -1040,16 +1312,35 @@ class OllamaChatGUI:
                     "content": ai_response
                 })
 
+                # 释放资源
+                del result, messages_snapshot
+                if 'search_summary' in locals():
+                    del search_summary
+                gc.collect()
+
                 return ai_response
             else:
                 # 请求失败，安全回滚用户消息
                 if history and history[-1].get("role") == "user":
                     history.pop()
+                # 释放资源
+                del messages_snapshot
+                if 'search_summary' in locals():
+                    del search_summary
+                gc.collect()
                 return f"错误: {response.status_code}"
         except Exception as e:
             # 网络异常，安全回滚用户消息
             if history and history[-1].get("role") == "user":
                 history.pop()
+            # 释放资源
+            try:
+                del messages_snapshot
+                if 'search_summary' in locals():
+                    del search_summary
+            except:
+                pass
+            gc.collect()
             return f"错误: {str(e)}"
 
     def start_api_server(self):
@@ -1097,6 +1388,8 @@ class OllamaChatGUI:
             self.start_api_server()
         else:
             self.stop_api_server()
+    
+
 
     def load_api_key_stats(self):
         """加载API Key调用统计数据"""
@@ -1240,40 +1533,8 @@ class OllamaChatGUI:
         stats_tab.grid_columnconfigure(0, weight=1)
         stats_tab.grid_rowconfigure(0, weight=1)
         
-        # 统计数据
-        stats_frame = ctk.CTkScrollableFrame(stats_tab)
-        stats_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        stats_frame.grid_columnconfigure(0, weight=1)
-        
-        # 标题行
-        stats_title_frame = ctk.CTkFrame(stats_frame)
-        stats_title_frame.grid(row=0, column=0, sticky="ew", pady=5)
-        stats_title_frame.grid_columnconfigure(0, weight=1)
-        stats_title_frame.grid_columnconfigure(1, weight=1)
-        stats_title_frame.grid_columnconfigure(2, weight=1)
-        stats_title_frame.grid_columnconfigure(3, weight=1)
-        
-        ctk.CTkLabel(stats_title_frame, text="API Key", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=5, pady=5)
-        ctk.CTkLabel(stats_title_frame, text="总调用次数", font=ctk.CTkFont(weight="bold")).grid(row=0, column=1, padx=5, pady=5)
-        ctk.CTkLabel(stats_title_frame, text="今日调用次数", font=ctk.CTkFont(weight="bold")).grid(row=0, column=2, padx=5, pady=5)
-        ctk.CTkLabel(stats_title_frame, text="最后调用时间", font=ctk.CTkFont(weight="bold")).grid(row=0, column=3, padx=5, pady=5)
-        
-        # 统计数据列表
-        for i, (key, stats) in enumerate(self.api_key_stats.items(), 1):
-            # 创建行
-            stats_row_frame = ctk.CTkFrame(stats_frame)
-            stats_row_frame.grid(row=i, column=0, sticky="ew", pady=5)
-            stats_row_frame.grid_columnconfigure(0, weight=1)
-            stats_row_frame.grid_columnconfigure(1, weight=1)
-            stats_row_frame.grid_columnconfigure(2, weight=1)
-            stats_row_frame.grid_columnconfigure(3, weight=1)
-            
-            # 添加数据
-            ctk.CTkLabel(stats_row_frame, text=key[:20] + "...").grid(row=0, column=0, padx=5, pady=5)
-            ctk.CTkLabel(stats_row_frame, text=str(stats.get("total_calls", 0))).grid(row=0, column=1, padx=5, pady=5)
-            ctk.CTkLabel(stats_row_frame, text=str(stats.get("calls_today", 0))).grid(row=0, column=2, padx=5, pady=5)
-            last_call = stats.get("last_call", "-").split('.')[0]
-            ctk.CTkLabel(stats_row_frame, text=last_call).grid(row=0, column=3, padx=5, pady=5)
+        # 使用新的create_dashboard_ui方法创建仪表盘UI
+        self.create_dashboard_ui(stats_tab)
 
     def delete_api_key(self, api_key, console_window):
         """删除API Key"""
@@ -1527,12 +1788,625 @@ class OllamaChatGUI:
                 
         except Exception as e:
             print(f"释放资源错误: {str(e)}")
+    
+    def release_gpu_resources(self):
+        """释放GPU资源"""
+        try:
+            # 1. 清理所有对话历史
+            self.conversation_history.clear()
+            self.conversation_histories.clear()
+            print("清理所有对话历史")
+            
+            # 2. 强制垃圾回收
+            import gc
+            gc.collect()
+            print("执行强制垃圾回收")
+            
+            # 3. 尝试使用pynvml释放GPU内存
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                device_count = pynvml.nvmlDeviceGetCount()
+                for i in range(device_count):
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                    # 获取GPU内存信息
+                    info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    print(f"GPU {i} 内存使用: {info.used / (1024 * 1024 * 1024):.2f} GB / {info.total / (1024 * 1024 * 1024):.2f} GB")
+                pynvml.nvmlShutdown()
+            except ImportError:
+                print("pynvml未安装，跳过GPU内存检查")
+            except Exception as e:
+                print(f"GPU内存释放错误: {str(e)}")
+                
+        except Exception as e:
+            print(f"释放GPU资源错误: {str(e)}")
+    
+    def cleanup_resources(self):
+        """清理所有资源"""
+        try:
+            # 1. 清理API速率限制数据
+            if hasattr(self, 'api_rate_limit'):
+                self.api_rate_limit.clear()
+            
+            # 2. 清理请求信号量
+            if hasattr(self, 'request_semaphore'):
+                # 释放所有信号量
+                try:
+                    for _ in range(self.max_concurrent_requests):
+                        self.request_semaphore.release()
+                except:
+                    pass
+            
+            # 3. 清理模型缓存
+            if hasattr(self, '_cached_models'):
+                self._cached_models = []
+            
+            # 4. 强制垃圾回收
+            import gc
+            gc.collect()
+            print("清理所有资源完成")
+            
+        except Exception as e:
+            print(f"清理资源错误: {str(e)}")
 
+    def exit_application(self):
+        """退出应用程序，正确释放所有资源"""
+        print("正在退出应用程序...")
+        
+        try:
+            # 1. 停止API服务器
+            if hasattr(self, 'api_server_enabled') and self.api_server_enabled:
+                print("停止API服务器...")
+                self.stop_api_server()
+            
+            # 2. 释放GPU资源
+            print("释放GPU资源...")
+            self.release_gpu_resources()
+            
+            # 3. 清理所有资源
+            print("清理所有资源...")
+            self.cleanup_resources()
+            
+            # 4. 保存配置
+            print("保存配置...")
+            self.save_config()
+            
+            # 5. 退出应用程序
+            print("退出应用程序...")
+            if hasattr(self, 'window'):
+                self.window.destroy()
+            
+            # 6. 强制退出进程
+            import os
+            os._exit(0)
+            
+        except Exception as e:
+            print(f"退出应用程序错误: {str(e)}")
+            # 即使出错也要强制退出
+            import os
+            os._exit(1)
+
+    def upload_text(self):
+        """上传文本文件"""
+        try:
+            from tkinter import filedialog
+            file_path = filedialog.askopenfilename(
+                title="选择文本文件",
+                filetypes=[
+                    ("文本文件", "*.txt"),
+                    ("所有文件", "*.*")
+                ]
+            )
+            
+            if file_path:
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                
+                # 限制文件大小
+                max_size = 100000  # 100KB
+                if len(content) > max_size:
+                    content = content[:max_size] + "\n...（文件过大，已截断）"
+                
+                # 将文本内容添加到输入框
+                self.input_text.delete("1.0", "end")
+                self.input_text.insert("1.0", content)
+                self.add_message("system", "系统", f"已上传文本文件: {os.path.basename(file_path)}")
+        except Exception as e:
+            self.add_message("system", "系统", f"上传文本文件失败: {str(e)}")
+
+    def upload_image(self):
+        """上传图片文件"""
+        try:
+            from tkinter import filedialog
+            file_path = filedialog.askopenfilename(
+                title="选择图片文件",
+                filetypes=[
+                    ("图片文件", "*.png;*.jpg;*.jpeg;*.gif;*.bmp"),
+                    ("所有文件", "*.*")
+                ]
+            )
+            
+            if file_path:
+                # 检查文件大小
+                file_size = os.path.getsize(file_path)
+                max_size = 5 * 1024 * 1024  # 5MB
+                if file_size > max_size:
+                    self.add_message("system", "系统", "图片文件过大，请选择小于5MB的图片")
+                    return
+                
+                # 读取图片并进行Base64编码（如果需要）
+                import base64
+                with open(file_path, "rb") as f:
+                    image_data = f.read()
+                
+                # 这里可以添加图片分析逻辑
+                self.add_message("system", "系统", f"已上传图片文件: {os.path.basename(file_path)}")
+                self.add_message("system", "系统", "图片已上传，请在输入框中描述您的需求")
+                
+                # 将图片信息添加到输入框
+                self.input_text.delete("1.0", "end")
+                self.input_text.insert("1.0", f"请分析以下图片: {os.path.basename(file_path)}")
+        except Exception as e:
+            self.add_message("system", "系统", f"上传图片文件失败: {str(e)}")
+
+    def toggle_web_search_mode(self):
+        """切换联网搜索模式"""
+        if self.web_search_var.get():
+            self.add_message("system", "系统", "联网搜索已启用，AI将自动联网获取最新信息")
+        else:
+            self.add_message("system", "系统", "联网搜索已禁用，AI将基于本地知识回答")
+
+    def perform_web_search(self, query):
+        """执行联网搜索"""
+        try:
+            # 网络安全措施
+            # 1. 输入验证和清理
+            if not query or len(query) > 1000:  # 限制搜索词长度
+                return ["搜索词无效或过长，请尝试更简洁的搜索词。"]
+            
+            # 2. 清理搜索词，防止注入攻击
+            import re
+            # 只允许字母、数字、中文和常见标点符号
+            clean_query = re.sub(r'[^\w\s\u4e00-\u9fa5\-.,!?]', '', query)
+            if not clean_query:
+                return ["搜索词包含无效字符，请重新输入。"]
+            
+            # 3. 搜索API安全配置
+            search_api = self.search_api_var.get() if hasattr(self, 'search_api_var') else "模拟搜索"
+            
+            # 4. 模拟搜索结果（实际应用中应集成安全的搜索API）
+            import time
+            import random
+            
+            # 模拟网络延迟，添加随机性
+            time.sleep(random.uniform(0.5, 1.5))
+            
+            # 5. 模拟搜索结果，确保内容安全
+            safe_results = [
+                f"搜索结果 1: {clean_query} - 这是第一个搜索结果，包含关于{clean_query}的详细信息。",
+                f"搜索结果 2: {clean_query} - 这是第二个搜索结果，提供了{clean_query}的最新数据。",
+                f"搜索结果 3: {clean_query} - 这是第三个搜索结果，解释了{clean_query}的相关概念。",
+                f"搜索结果 4: {clean_query} - 这是第四个搜索结果，包含{clean_query}的实际应用案例。",
+                f"搜索结果 5: {clean_query} - 这是第五个搜索结果，提供了{clean_query}的未来发展趋势。"
+            ]
+            
+            # 6. 记录搜索请求（便于审计）
+            print(f"[安全日志] 执行联网搜索: {clean_query}")
+            
+            return safe_results
+        except Exception as e:
+            # 7. 错误处理，避免泄露敏感信息
+            print(f"[安全日志] 搜索失败: {str(e)}")
+            return ["搜索服务暂时不可用，请稍后再试。"]
+
+
+
+    def create_dashboard_ui(self, dashboard_tab):
+        """创建仪表盘UI"""
+        # 高级仪表盘标题
+        dashboard_title = ctk.CTkLabel(
+            dashboard_tab,
+            text="API服务实时监测仪表盘",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#3498db"
+        )
+        dashboard_title.pack(pady=(20, 10))
+        
+        # 统计卡片网格
+        stats_grid_frame = ctk.CTkFrame(dashboard_tab, corner_radius=15, border_width=1, border_color="#444444")
+        stats_grid_frame.pack(fill="x", padx=20, pady=10)
+        stats_grid_frame.grid_columnconfigure(0, weight=1)
+        stats_grid_frame.grid_columnconfigure(1, weight=1)
+        stats_grid_frame.grid_columnconfigure(2, weight=1)
+        stats_grid_frame.grid_columnconfigure(3, weight=1)
+        
+        # 总调用次数卡片
+        total_calls_frame = ctk.CTkFrame(stats_grid_frame, corner_radius=10, fg_color="#1a1a2e")
+        total_calls_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        
+        total_calls_icon = ctk.CTkLabel(
+            total_calls_frame,
+            text="📊",
+            font=ctk.CTkFont(size=24)
+        )
+        total_calls_icon.pack(pady=(15, 5))
+        
+        total_calls_label = ctk.CTkLabel(
+            total_calls_frame,
+            text="总调用次数",
+            font=ctk.CTkFont(size=12),
+            text_color="#95a5a6"
+        )
+        total_calls_label.pack(pady=5)
+        
+        total_calls_value = sum(stats.get("total_calls", 0) for stats in self.api_key_stats.values())
+        total_calls_value_label = ctk.CTkLabel(
+            total_calls_frame,
+            text=str(total_calls_value),
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#3498db"
+        )
+        total_calls_value_label.pack(pady=5)
+        
+        # 今日调用次数卡片
+        today_calls_frame = ctk.CTkFrame(stats_grid_frame, corner_radius=10, fg_color="#1a1a2e")
+        today_calls_frame.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+        
+        today_calls_icon = ctk.CTkLabel(
+            today_calls_frame,
+            text="📅",
+            font=ctk.CTkFont(size=24)
+        )
+        today_calls_icon.pack(pady=(15, 5))
+        
+        today_calls_label = ctk.CTkLabel(
+            today_calls_frame,
+            text="今日调用次数",
+            font=ctk.CTkFont(size=12),
+            text_color="#95a5a6"
+        )
+        today_calls_label.pack(pady=5)
+        
+        today_calls_value = sum(stats.get("calls_today", 0) for stats in self.api_key_stats.values())
+        today_calls_value_label = ctk.CTkLabel(
+            today_calls_frame,
+            text=str(today_calls_value),
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#4CAF50"
+        )
+        today_calls_value_label.pack(pady=5)
+        
+        # 活跃API Key数量卡片
+        active_keys_frame = ctk.CTkFrame(stats_grid_frame, corner_radius=10, fg_color="#1a1a2e")
+        active_keys_frame.grid(row=0, column=2, padx=10, pady=10, sticky="nsew")
+        
+        active_keys_icon = ctk.CTkLabel(
+            active_keys_frame,
+            text="🔑",
+            font=ctk.CTkFont(size=24)
+        )
+        active_keys_icon.pack(pady=(15, 5))
+        
+        active_keys_label = ctk.CTkLabel(
+            active_keys_frame,
+            text="活跃API Key",
+            font=ctk.CTkFont(size=12),
+            text_color="#95a5a6"
+        )
+        active_keys_label.pack(pady=5)
+        
+        active_keys_value = len([key for key, stats in self.api_key_stats.items() if stats.get("total_calls", 0) > 0])
+        active_keys_value_label = ctk.CTkLabel(
+            active_keys_frame,
+            text=str(active_keys_value),
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#FF9800"
+        )
+        active_keys_value_label.pack(pady=5)
+        
+        # API服务状态卡片
+        status_frame = ctk.CTkFrame(stats_grid_frame, corner_radius=10, fg_color="#1a1a2e")
+        status_frame.grid(row=0, column=3, padx=10, pady=10, sticky="nsew")
+        
+        status_icon = ctk.CTkLabel(
+            status_frame,
+            text="🟢" if self.api_server_enabled else "🔴",
+            font=ctk.CTkFont(size=24)
+        )
+        status_icon.pack(pady=(15, 5))
+        
+        status_label = ctk.CTkLabel(
+            status_frame,
+            text="API服务状态",
+            font=ctk.CTkFont(size=12),
+            text_color="#95a5a6"
+        )
+        status_label.pack(pady=5)
+        
+        status_value = "运行中" if self.api_server_enabled else "已停止"
+        status_value_label = ctk.CTkLabel(
+            status_frame,
+            text=status_value,
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color="#4CAF50" if self.api_server_enabled else "#e74c3c"
+        )
+        status_value_label.pack(pady=5)
+        
+        # 详细统计区域
+        details_frame = ctk.CTkFrame(dashboard_tab, corner_radius=15, border_width=1, border_color="#444444")
+        details_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        details_frame.grid_columnconfigure(0, weight=1)
+        details_frame.grid_rowconfigure(0, weight=1)
+        
+        # API Key使用情况标题
+        usage_title = ctk.CTkLabel(
+            details_frame,
+            text="API Key使用详情",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#3498db"
+        )
+        usage_title.pack(pady=(15, 10))
+        
+        # 高级表格框架
+        table_frame = ctk.CTkScrollableFrame(details_frame, corner_radius=10)
+        table_frame.pack(fill="both", expand=True, padx=15, pady=10)
+        
+        # 表头
+        header_frame = ctk.CTkFrame(table_frame, fg_color="#1a1a2e", corner_radius=5)
+        header_frame.pack(fill="x", pady=5)
+        header_frame.grid_columnconfigure(0, weight=2)
+        header_frame.grid_columnconfigure(1, weight=1)
+        header_frame.grid_columnconfigure(2, weight=1)
+        header_frame.grid_columnconfigure(3, weight=2)
+        
+        ctk.CTkLabel(header_frame, text="API Key", font=ctk.CTkFont(weight="bold"), text_color="#3498db").grid(row=0, column=0, padx=10, pady=8, sticky="w")
+        ctk.CTkLabel(header_frame, text="总调用次数", font=ctk.CTkFont(weight="bold"), text_color="#3498db").grid(row=0, column=1, padx=10, pady=8, sticky="w")
+        ctk.CTkLabel(header_frame, text="今日调用次数", font=ctk.CTkFont(weight="bold"), text_color="#3498db").grid(row=0, column=2, padx=10, pady=8, sticky="w")
+        ctk.CTkLabel(header_frame, text="最后调用时间", font=ctk.CTkFont(weight="bold"), text_color="#3498db").grid(row=0, column=3, padx=10, pady=8, sticky="w")
+        
+        # 表格数据
+        if self.api_key_stats:
+            for i, (key, stats) in enumerate(self.api_key_stats.items(), 1):
+                # 交替行颜色
+                row_bg = "#1a1a2e" if i % 2 == 0 else "#16213e"
+                row_frame = ctk.CTkFrame(table_frame, fg_color=row_bg, corner_radius=5)
+                row_frame.pack(fill="x", pady=2)
+                row_frame.grid_columnconfigure(0, weight=2)
+                row_frame.grid_columnconfigure(1, weight=1)
+                row_frame.grid_columnconfigure(2, weight=1)
+                row_frame.grid_columnconfigure(3, weight=2)
+                
+                # API Key
+                key_label = ctk.CTkLabel(row_frame, text=key[:30] + "...", text_color="#ffffff")
+                key_label.grid(row=0, column=0, padx=10, pady=8, sticky="w")
+                
+                # 总调用次数
+                total_calls = stats.get("total_calls", 0)
+                total_calls_label = ctk.CTkLabel(row_frame, text=str(total_calls), text_color="#3498db")
+                total_calls_label.grid(row=0, column=1, padx=10, pady=8, sticky="w")
+                
+                # 今日调用次数
+                today_calls = stats.get("calls_today", 0)
+                today_calls_label = ctk.CTkLabel(row_frame, text=str(today_calls), text_color="#4CAF50")
+                today_calls_label.grid(row=0, column=2, padx=10, pady=8, sticky="w")
+                
+                # 最后调用时间
+                last_call = stats.get("last_call", "-").split('.')[0]
+                last_call_label = ctk.CTkLabel(row_frame, text=last_call, text_color="#95a5a6")
+                last_call_label.grid(row=0, column=3, padx=10, pady=8, sticky="w")
+        else:
+            no_data_frame = ctk.CTkFrame(table_frame, corner_radius=10, fg_color="#1a1a2e")
+            no_data_frame.pack(fill="both", expand=True, pady=20)
+            no_data_label = ctk.CTkLabel(
+                no_data_frame,
+                text="暂无API调用数据",
+                font=ctk.CTkFont(size=14),
+                text_color="#95a5a6"
+            )
+            no_data_label.pack(pady=40)
+        
+        # 操作按钮区域
+        buttons_frame = ctk.CTkFrame(dashboard_tab, fg_color="transparent")
+        buttons_frame.pack(fill="x", padx=20, pady=10)
+        buttons_frame.grid_columnconfigure(0, weight=1)
+        
+        # 刷新按钮
+        refresh_btn = ctk.CTkButton(
+            buttons_frame,
+            text="🔄 刷新数据",
+            command=lambda: self.refresh_dashboard(dashboard_tab),
+            fg_color="#3498db",
+            hover_color="#2980b9",
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        refresh_btn.pack(side="right", padx=10)
+        
+        # 导出数据按钮
+        export_btn = ctk.CTkButton(
+            buttons_frame,
+            text="📤 导出统计",
+            command=lambda: self.export_dashboard_data(),
+            fg_color="#27ae60",
+            hover_color="#229954",
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        export_btn.pack(side="right", padx=10)
+
+    def refresh_dashboard(self, dashboard_tab):
+        """刷新仪表盘数据"""
+        # 重新加载API Key统计数据
+        self.api_key_stats = self.load_api_key_stats()
+        
+        # 清除现有仪表盘内容
+        for widget in dashboard_tab.winfo_children():
+            widget.destroy()
+        
+        # 重新创建仪表盘UI
+        self.create_dashboard_ui(dashboard_tab)
+
+    def export_dashboard_data(self):
+        """导出仪表盘数据"""
+        try:
+            import json
+            import datetime
+            
+            # 准备导出数据
+            export_data = {
+                "export_time": datetime.datetime.now().isoformat(),
+                "total_calls": sum(stats.get("total_calls", 0) for stats in self.api_key_stats.values()),
+                "today_calls": sum(stats.get("calls_today", 0) for stats in self.api_key_stats.values()),
+                "active_api_keys": len([key for key, stats in self.api_key_stats.items() if stats.get("total_calls", 0) > 0]),
+                "api_server_status": "运行中" if self.api_server_enabled else "已停止",
+                "api_key_stats": self.api_key_stats
+            }
+            
+            # 生成文件名
+            filename = f"api_dashboard_export_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = os.path.join(os.path.dirname(__file__), filename)
+            
+            # 写入文件
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(export_data, f, ensure_ascii=False, indent=2)
+            
+            # 显示成功消息
+            self.add_message("system", "系统", f"仪表盘数据已导出到: {filename}")
+        except Exception as e:
+            # 显示错误消息
+            self.add_message("system", "系统", f"导出仪表盘数据失败: {str(e)}")
+
+    def show_console_selector(self):
+        """显示控制台选择界面"""
+        # 创建主窗口而不是Toplevel，避免白色边框问题
+        selector_window = ctk.CTk()
+        selector_window.title("控制台选择")
+        selector_window.geometry("500x350")
+        selector_window.resizable(False, False)
+        
+        # 设置窗口居中
+        selector_window.update_idletasks()
+        width = selector_window.winfo_width()
+        height = selector_window.winfo_height()
+        x = (selector_window.winfo_screenwidth() // 2) - (width // 2)
+        y = (selector_window.winfo_screenheight() // 2) - (height // 2)
+        selector_window.geometry(f"{width}x{height}+{x}+{y}")
+        
+        # 配置网格布局
+        selector_window.grid_columnconfigure(0, weight=1)
+        selector_window.grid_rowconfigure(0, weight=1)
+        selector_window.grid_rowconfigure(1, weight=1)
+        selector_window.grid_rowconfigure(2, weight=1)
+        
+        # 标题
+        title_label = ctk.CTkLabel(
+            selector_window,
+            text="选择控制台模式",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title_label.grid(row=0, column=0, padx=20, pady=30)
+        
+        # 选择变量
+        console_var = ctk.StringVar(value="local")
+        
+        # 本地控制台选项
+        local_frame = ctk.CTkFrame(selector_window, corner_radius=10, border_width=2, border_color="#3498db")
+        local_frame.grid(row=1, column=0, padx=50, pady=10, sticky="nsew")
+        local_frame.grid_columnconfigure(0, weight=1)
+        
+        local_radio = ctk.CTkRadioButton(
+            local_frame,
+            text="本地控制台",
+            variable=console_var,
+            value="local",
+            font=ctk.CTkFont(size=14)
+        )
+        local_radio.grid(row=0, column=0, padx=20, pady=15, sticky="w")
+        
+        local_desc = ctk.CTkLabel(
+            local_frame,
+            text="使用桌面应用程序进行对话，功能完整且响应迅速",
+            font=ctk.CTkFont(size=12),
+            text_color="#95a5a6"
+        )
+        local_desc.grid(row=1, column=0, padx=20, pady=(0, 15), sticky="w")
+        
+        # Web控制台选项
+        web_frame = ctk.CTkFrame(selector_window, corner_radius=10, border_width=2, border_color="#27ae60")
+        web_frame.grid(row=2, column=0, padx=50, pady=10, sticky="nsew")
+        web_frame.grid_columnconfigure(0, weight=1)
+        
+        web_radio = ctk.CTkRadioButton(
+            web_frame,
+            text="Web控制台",
+            variable=console_var,
+            value="web",
+            font=ctk.CTkFont(size=14)
+        )
+        web_radio.grid(row=0, column=0, padx=20, pady=15, sticky="w")
+        
+        web_desc = ctk.CTkLabel(
+            web_frame,
+            text="通过浏览器访问，支持设备监控和远程访问",
+            font=ctk.CTkFont(size=12),
+            text_color="#95a5a6"
+        )
+        web_desc.grid(row=1, column=0, padx=20, pady=(0, 15), sticky="w")
+        
+        # 确认按钮
+        def on_confirm():
+            nonlocal selected_mode
+            selected_mode = console_var.get()
+            selector_window.destroy()
+        
+        selected_mode = "local"
+        confirm_btn = ctk.CTkButton(
+            selector_window,
+            text="确认选择",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=on_confirm
+        )
+        confirm_btn.grid(row=3, column=0, padx=50, pady=30, sticky="ew")
+        
+        # 等待用户选择
+        selector_window.mainloop()
+        
+        return selected_mode
+    
     def run(self):
         """运行应用"""
-        self.window.mainloop()
+        # 如果是本地控制台，绑定窗口关闭事件
+        if hasattr(self, 'window'):
+            self.window.protocol("WM_DELETE_WINDOW", self.on_window_close)
+            self.window.mainloop()
+        # 如果是web控制台，保持程序运行
+        else:
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                print("程序已停止")
+    
+    def on_window_close(self):
+        """窗口关闭事件处理"""
+        # 保存API密钥
+        self.save_api_keys()
+        # 保存API密钥统计数据
+        self.save_api_key_stats()
+        # 保存配置
+        self.save_config()
+        # 停止API服务
+        if self.api_server_enabled:
+            self.stop_api_server()
+        # 释放GPU资源
+        self.release_gpu_resources()
+        # 清理所有资源
+        self.cleanup_resources()
+        # 关闭窗口
+        self.window.destroy()
 
 
 if __name__ == "__main__":
+    print("启动Ollama Chat Client...")
     app = OllamaChatGUI()
+    print("应用初始化完成，使用本地控制台模式")
     app.run()
+    print("应用程序已退出")

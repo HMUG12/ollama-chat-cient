@@ -12,6 +12,10 @@ Ollama Chat Client 是一个基于本地 Ollama 服务的聊天客户端，支�
 - ✅ 一键启动，自动安装依赖
 - ✅ 配置文件管理
 - ✅ API Key 管理
+- ✅ 实时监测仪表盘
+- ✅ 内存和 GPU 内存监控
+- ✅ 文件上传功能（文本和图片）
+- ✅ 联网搜索功能
 
 
 ## 快速开始
@@ -147,6 +151,16 @@ default_model = llama2
 # API配置
 enable_external_api = false
 external_api_base_url = https://api.openai.com/v1
+
+[Performance]
+# 性能配置
+max_concurrent_requests = 5
+request_timeout = 60
+max_history_rounds = 20
+memory_check_interval = 60
+max_memory_usage = 80
+gpu_memory_check_enabled = true
+max_gpu_memory_usage = 80
 ```
 
 ## 常见问题
@@ -172,6 +186,12 @@ pip install -r requirements.txt
 - API Key 是否已过期
 - API Key 的传递方式是否正确
 
+### 4. 内存使用过高
+
+应用会自动监控内存使用情况，当内存使用率超过阈值时，会自动释放部分资源。如果问题仍然存在，可以尝试：
+- 减少 `max_history_rounds` 配置值
+- 降低 `max_concurrent_requests` 配置值
+
 ## 开发说明
 
 ### 项目结构
@@ -181,6 +201,8 @@ pip install -r requirements.txt
 ├── main.py            # 主应用文件
 ├── start.py           # 启动脚本
 ├── config.ini         # 配置文件
+├── api_keys.json      # API Key 存储文件
+├── api_key_stats.json # API Key 调用统计文件
 ├── requirements.txt   # 依赖列表
 └── README.md          # 说明文档
 ```

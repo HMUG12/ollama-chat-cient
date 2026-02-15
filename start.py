@@ -12,7 +12,8 @@ import platform
 REQUIREMENTS = [
     "customtkinter>=5.2.0",
     "requests>=2.31.0",
-    "flask>=3.1.2"
+    "flask>=3.1.2",
+    "psutil>=5.9.0"
 ]
 
 # 主应用文件
