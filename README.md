@@ -1,4 +1,4 @@
-# Ollama Chat Client 一键包
+# Ollama Chat Client 一键包V2.0
 
 ## 简介
 
