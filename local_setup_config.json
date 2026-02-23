@@ -1,0 +1,7 @@
+{
+  "installed_services": [],
+  "environment_variables": {},
+  "port_mappings": {
+    "ollama": 11434
+  }
+}

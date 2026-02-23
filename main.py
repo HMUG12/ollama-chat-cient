@@ -16,6 +16,13 @@ from collections import deque
 import gc
 import psutil
 
+# 导入本地搭建管理器
+from local_setup.setup_manager import SetupManager
+from servers.main_server import MainServer
+from servers.memory_server import MemoryServer
+from servers.agent_server import AgentServer
+from servers.monitor_server import MonitorServer
+
 
 class OllamaChatGUI:
     def __init__(self):
@@ -98,6 +105,18 @@ class OllamaChatGUI:
         self.max_memory_usage = 85  # 最大内存使用率
         # GPU内存管理配置
         self.gpu_memory_check_enabled = False  # 禁用GPU内存监控以减少资源占用
+        
+        # 本地搭建管理器
+        self.setup_manager = SetupManager()
+        
+        # 服务器实例
+        self.servers = {
+            'main': None,
+            'memory': None,
+            'agent': None,
+            'monitor': None
+        }
+        
         self.max_gpu_memory_usage = 80  # 最大GPU内存使用率
         # 启动内存监控线程
         self.memory_monitor_thread = threading.Thread(target=self.monitor_memory, daemon=True)
@@ -107,6 +126,38 @@ class OllamaChatGUI:
         self._waiting_response = False
         # 加载动画状态
         self.loading_animation_running = False
+
+        # 初始化窗口
+        self.initialize_window()
+    
+    def initialize_window(self):
+        """初始化窗口"""
+        # 初始化本地控制台窗口
+        print("启动本地控制台...")
+        self.window = ctk.CTk()
+        self.window.title("Ollama Chat Client - 本地AI助手")
+        self.window.geometry("1050x700")
+        # 设置窗口最小尺寸
+        self.window.minsize(800, 500)
+
+        # 对话历史管理
+        self.max_history_rounds = 20  # 最大对话轮数
+        # 为每个API Key创建独立的对话历史
+        self.conversation_histories = {}  # {api_key: deque}
+        # 全局对话历史（用于GUI）
+        self.conversation_history = deque(maxlen=self.max_history_rounds)
+
+        # API请求处理配置
+        self.max_concurrent_requests = 5  # 最大并发请求数
+        self.request_timeout = 60  # 请求超时时间（秒）
+        # 请求队列控制
+        self.request_semaphore = threading.Semaphore(self.max_concurrent_requests)
+
+        # 内存管理配置
+        self.memory_check_interval = 300  # 内存检查间隔（秒）- 增加间隔减少资源占用
+        self.max_memory_usage = 85  # 最大内存使用率
+        # GPU内存管理配置
+        self.gpu_memory_check_enabled = False  # 禁用GPU内存监控以减少资源占用
 
         # 加载配置
         self.load_config()
@@ -122,11 +173,14 @@ class OllamaChatGUI:
         
         # 绑定窗口缩放事件
         self.window.bind("<Configure>", self.on_window_resize)
+        
+
 
     def setup_ui(self):
         """设置用户界面"""
         # 创建网格布局
         self.window.grid_columnconfigure(1, weight=1)
+        self.window.grid_columnconfigure(2, weight=0)
         self.window.grid_rowconfigure(0, weight=1)
 
         # 左侧边栏 - 恢复原始简洁设计
@@ -163,7 +217,7 @@ class OllamaChatGUI:
             font=ctk.CTkFont(size=10, weight="bold"),
             height=28
         )
-        update_url_btn.grid(row=3, column=0, padx=15, pady=(0, 10), sticky="ew")
+        update_url_btn.grid(row=3, column=0, padx=15, pady=(0, 5), sticky="ew")
 
         # 模型选择
         model_label = ctk.CTkLabel(sidebar_frame, text="选择模型:")
@@ -176,7 +230,7 @@ class OllamaChatGUI:
             variable=self.model_var,
             command=self.change_model
         )
-        self.model_dropdown.grid(row=5, column=0, padx=15, pady=(0, 8), sticky="ew")
+        self.model_dropdown.grid(row=5, column=0, padx=15, pady=(0, 5), sticky="ew")
 
         # 刷新模型按钮
         refresh_btn = ctk.CTkButton(
@@ -191,7 +245,7 @@ class OllamaChatGUI:
             font=ctk.CTkFont(size=10, weight="bold"),
             height=28
         )
-        refresh_btn.grid(row=6, column=0, padx=15, pady=8, sticky="ew")
+        refresh_btn.grid(row=6, column=0, padx=15, pady=5, sticky="ew")
 
         # 拉取模型按钮
         pull_model_btn = ctk.CTkButton(
@@ -206,7 +260,7 @@ class OllamaChatGUI:
             font=ctk.CTkFont(size=10, weight="bold"),
             height=28
         )
-        pull_model_btn.grid(row=7, column=0, padx=15, pady=8, sticky="ew")
+        pull_model_btn.grid(row=7, column=0, padx=15, pady=5, sticky="ew")
 
         # 清除对话按钮 - 调整位置避免重叠
         self.clear_btn = ctk.CTkButton(
@@ -222,7 +276,7 @@ class OllamaChatGUI:
             height=28,
             command=self.clear_conversation
         )
-        self.clear_btn.grid(row=8, column=0, padx=15, pady=8, sticky="ew")
+        self.clear_btn.grid(row=8, column=0, padx=15, pady=5, sticky="ew")
 
         # 端口扫描按钮
         port_scan_btn = ctk.CTkButton(
@@ -238,11 +292,11 @@ class OllamaChatGUI:
             height=28,
             command=self.open_port_scan_window
         )
-        port_scan_btn.grid(row=9, column=0, padx=15, pady=8, sticky="ew")
+        port_scan_btn.grid(row=9, column=0, padx=15, pady=5, sticky="ew")
 
         # API服务管理区域
         api_server_frame = ctk.CTkFrame(sidebar_frame, corner_radius=8)
-        api_server_frame.grid(row=10, column=0, padx=15, pady=8, sticky="ew")
+        api_server_frame.grid(row=10, column=0, padx=15, pady=5, sticky="ew")
         api_server_frame.grid_columnconfigure(0, weight=1)
 
         api_server_title = ctk.CTkLabel(
@@ -261,7 +315,7 @@ class OllamaChatGUI:
             font=ctk.CTkFont(size=10)
         )
         external_call_btn.grid(row=1, column=0, padx=10, pady=4, sticky="ew")
-
+        
         # 本地服务搭建按钮
         local_service_btn = ctk.CTkButton(
             api_server_frame,
@@ -271,14 +325,20 @@ class OllamaChatGUI:
             font=ctk.CTkFont(size=10)
         )
         local_service_btn.grid(row=2, column=0, padx=10, pady=4, sticky="ew")
-
-        # API服务状态
-        self.api_server_status = ctk.CTkLabel(
-            api_server_frame, 
-            text="API服务状态: 未启动",
-            font=ctk.CTkFont(size=10)
+        
+        # 服务器模式按钮
+        server_mode_btn = ctk.CTkButton(
+            api_server_frame,
+            text="服务器模式",
+            command=self.start_server_mode,
+            height=26,
+            font=ctk.CTkFont(size=10),
+            fg_color="#8e44ad",
+            hover_color="#9b59b6"
         )
-        self.api_server_status.grid(row=3, column=0, padx=10, pady=(8, 8))
+        server_mode_btn.grid(row=3, column=0, padx=10, pady=4, sticky="ew")
+        
+
 
         # 设置按钮
         settings_btn = ctk.CTkButton(
@@ -448,6 +508,76 @@ class OllamaChatGUI:
         self.input_text.bind("<Return>", self._on_enter)
         self.input_text.bind("<Shift-Return>", lambda e: None)  # 允许换行
 
+        # 右侧模型查看器面板
+        model_viewer_frame = ctk.CTkFrame(self.window, width=300, corner_radius=0)
+        model_viewer_frame.grid(row=0, column=2, sticky="nsew")
+        model_viewer_frame.grid_rowconfigure(2, weight=1)
+
+        # 模型查看器标题
+        model_viewer_title = ctk.CTkLabel(
+            model_viewer_frame,
+            text="模型查看器",
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        model_viewer_title.grid(row=0, column=0, padx=15, pady=15)
+
+        # 刷新模型按钮
+        refresh_models_btn = ctk.CTkButton(
+            model_viewer_frame,
+            text="🔄 刷新模型",
+            command=self.refresh_model_viewer,
+            height=30,
+            font=ctk.CTkFont(size=10)
+        )
+        refresh_models_btn.grid(row=1, column=0, padx=15, pady=5, sticky="ew")
+
+        # 模型列表
+        self.model_listbox = ctk.CTkScrollableFrame(model_viewer_frame)
+        self.model_listbox.grid(row=2, column=0, padx=15, pady=5, sticky="nsew")
+
+        # 操作按钮区域
+        actions_frame = ctk.CTkFrame(model_viewer_frame, fg_color="transparent")
+        actions_frame.grid(row=3, column=0, padx=15, pady=10, sticky="ew")
+        actions_frame.grid_columnconfigure(0, weight=1)
+        actions_frame.grid_columnconfigure(1, weight=1)
+
+        # 复制模型按钮
+        copy_model_btn = ctk.CTkButton(
+            actions_frame,
+            text="📋 复制",
+            command=self.copy_selected_model,
+            height=30,
+            font=ctk.CTkFont(size=10)
+        )
+        copy_model_btn.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="ew")
+
+        # 删除模型按钮
+        delete_model_btn = ctk.CTkButton(
+            actions_frame,
+            text="🗑️ 删除",
+            command=self.delete_selected_model,
+            height=30,
+            font=ctk.CTkFont(size=10),
+            fg_color="#e74c3c",
+            hover_color="#c0392b"
+        )
+        delete_model_btn.grid(row=0, column=1, padx=(5, 0), pady=5, sticky="ew")
+
+        # 模型微调按钮
+        fine_tune_btn = ctk.CTkButton(
+            model_viewer_frame,
+            text="🔧 模型微调",
+            command=self.open_fine_tune_window,
+            height=30,
+            font=ctk.CTkFont(size=10),
+            fg_color="#f39c12",
+            hover_color="#e67e22"
+        )
+        fine_tune_btn.grid(row=4, column=0, padx=15, pady=5, sticky="ew")
+
+        # 初始加载模型列表
+        self.refresh_model_viewer()
+
     def _on_enter(self, event=None):
         """Enter 键发送消息"""
         self.send_message()
@@ -541,6 +671,260 @@ class OllamaChatGUI:
         if models:
             self.model_dropdown.set(models[0])
             self.current_model = models[0]
+
+    def refresh_model_viewer(self):
+        """刷新模型查看器列表"""
+        # 清空现有模型列表
+        for widget in self.model_listbox.winfo_children():
+            widget.destroy()
+
+        # 获取可用模型
+        models = self.get_available_models()
+        
+        # 存储选中的模型
+        self.selected_model = None
+        
+        # 添加模型到列表
+        for i, model_name in enumerate(models):
+            model_frame = ctk.CTkFrame(self.model_listbox, fg_color="transparent")
+            model_frame.grid(row=i, column=0, padx=5, pady=3, sticky="ew")
+            model_frame.grid_columnconfigure(0, weight=1)
+            
+            # 模型名称标签
+            model_label = ctk.CTkLabel(
+                model_frame,
+                text=model_name,
+                font=ctk.CTkFont(size=11)
+            )
+            model_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+            
+            # 选择按钮
+            select_btn = ctk.CTkButton(
+                model_frame,
+                text="选择",
+                command=lambda m=model_name: self.select_model(m),
+                width=60,
+                height=24,
+                font=ctk.CTkFont(size=9)
+            )
+            select_btn.grid(row=0, column=1, padx=5, pady=5)
+
+    def select_model(self, model_name):
+        """选择模型"""
+        self.selected_model = model_name
+        self.add_message("system", "系统", f"已选择模型: {model_name}")
+
+    def copy_selected_model(self):
+        """复制选中的模型"""
+        if not self.selected_model:
+            self.add_message("system", "系统", "请先选择一个模型")
+            return
+        
+        # 复制模型名称到剪贴板
+        import pyperclip
+        pyperclip.copy(self.selected_model)
+        self.add_message("system", "系统", f"模型名称已复制到剪贴板: {self.selected_model}")
+
+    def delete_selected_model(self):
+        """删除选中的模型"""
+        if not self.selected_model:
+            self.add_message("system", "系统", "请先选择一个模型")
+            return
+        
+        # 确认删除
+        import tkinter as tk
+        from tkinter import messagebox
+        
+        result = messagebox.askyesno(
+            "确认删除",
+            f"确定要删除模型 '{self.selected_model}' 吗？"
+        )
+        
+        if result:
+            try:
+                # 调用Ollama API删除模型
+                url = f"{self.base_url}/api/delete"
+                data = {
+                    "name": self.selected_model
+                }
+                
+                response = requests.post(url, json=data, timeout=30)
+                
+                if response.status_code == 200:
+                    self.add_message("system", "系统", f"模型 '{self.selected_model}' 删除成功")
+                    # 刷新模型列表和查看器
+                    self.refresh_models()
+                    self.refresh_model_viewer()
+                else:
+                    self.add_message("system", "系统", f"删除模型失败: {response.status_code}")
+            except Exception as e:
+                self.add_message("system", "系统", f"删除模型时出错: {str(e)}")
+
+    def open_fine_tune_window(self):
+        """打开模型微调窗口"""
+        if not self.selected_model:
+            self.add_message("system", "系统", "请先选择一个模型进行微调")
+            return
+        
+        window = ctk.CTkToplevel(self.window)
+        window.title("模型微调")
+        window.geometry("600x500")
+        window.transient(self.window)
+        window.grab_set()
+        
+        window.grid_columnconfigure(0, weight=1)
+        window.grid_columnconfigure(1, weight=1)
+        
+        # 标题
+        title_label = ctk.CTkLabel(
+            window,
+            text="🔧 模型微调",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title_label.grid(row=0, column=0, columnspan=2, pady=(20, 20))
+        
+        # 选中的模型
+        model_label = ctk.CTkLabel(window, text="选中模型:")
+        model_label.grid(row=1, column=0, padx=20, pady=10, sticky="e")
+        
+        model_name_label = ctk.CTkLabel(
+            window,
+            text=self.selected_model,
+            font=ctk.CTkFont(size=11, weight="bold")
+        )
+        model_name_label.grid(row=1, column=1, padx=20, pady=10, sticky="w")
+        
+        # 微调数据路径
+        data_label = ctk.CTkLabel(window, text="微调数据路径:")
+        data_label.grid(row=2, column=0, padx=20, pady=10, sticky="e")
+        
+        self.fine_tune_data_entry = ctk.CTkEntry(window, width=300)
+        self.fine_tune_data_entry.grid(row=2, column=1, padx=20, pady=10, sticky="w")
+        
+        # 数据格式
+        format_label = ctk.CTkLabel(window, text="数据格式:")
+        format_label.grid(row=3, column=0, padx=20, pady=10, sticky="e")
+        
+        self.format_var = ctk.StringVar(value="jsonl")
+        format_options = ["jsonl", "csv", "txt"]
+        
+        format_dropdown = ctk.CTkComboBox(
+            window,
+            values=format_options,
+            variable=self.format_var,
+            width=100
+        )
+        format_dropdown.grid(row=3, column=1, padx=20, pady=10, sticky="w")
+        
+        # 微调参数
+        params_frame = ctk.CTkFrame(window, corner_radius=8)
+        params_frame.grid(row=4, column=0, columnspan=2, padx=20, pady=10, sticky="ew")
+        
+        params_title = ctk.CTkLabel(
+            params_frame,
+            text="微调参数",
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        params_title.grid(row=0, column=0, padx=20, pady=(10, 5), sticky="w")
+        
+        # 学习率
+        lr_label = ctk.CTkLabel(params_frame, text="学习率:")
+        lr_label.grid(row=1, column=0, padx=20, pady=5, sticky="e")
+        
+        self.lr_entry = ctk.CTkEntry(params_frame, width=100)
+        self.lr_entry.insert(0, "0.0001")
+        self.lr_entry.grid(row=1, column=1, padx=20, pady=5, sticky="w")
+        
+        # 训练轮数
+        epochs_label = ctk.CTkLabel(params_frame, text="训练轮数:")
+        epochs_label.grid(row=2, column=0, padx=20, pady=5, sticky="e")
+        
+        self.epochs_entry = ctk.CTkEntry(params_frame, width=100)
+        self.epochs_entry.insert(0, "3")
+        self.epochs_entry.grid(row=2, column=1, padx=20, pady=5, sticky="w")
+        
+        # 批次大小
+        batch_label = ctk.CTkLabel(params_frame, text="批次大小:")
+        batch_label.grid(row=3, column=0, padx=20, pady=5, sticky="e")
+        
+        self.batch_entry = ctk.CTkEntry(params_frame, width=100)
+        self.batch_entry.insert(0, "4")
+        self.batch_entry.grid(row=3, column=1, padx=20, pady=5, sticky="w")
+        
+        # 开始微调按钮
+        def start_fine_tune():
+            data_path = self.fine_tune_data_entry.get().strip()
+            if not data_path:
+                self.add_message("system", "系统", "请输入微调数据路径")
+                return
+            
+            # 获取参数
+            lr = self.lr_entry.get().strip()
+            epochs = self.epochs_entry.get().strip()
+            batch_size = self.batch_entry.get().strip()
+            
+            # 验证参数
+            try:
+                float(lr)
+                int(epochs)
+                int(batch_size)
+            except ValueError:
+                self.add_message("system", "系统", "请输入有效的参数值")
+                return
+            
+            # 开始微调
+            self.add_message("system", "系统", f"开始微调模型: {self.selected_model}")
+            
+            # 在新线程中执行微调
+            def fine_tune_thread():
+                try:
+                    # 构建微调请求
+                    url = f"{self.base_url}/api/fine-tune"
+                    data = {
+                        "model": self.selected_model,
+                        "data": data_path,
+                        "format": self.format_var.get(),
+                        "learning_rate": float(lr),
+                        "epochs": int(epochs),
+                        "batch_size": int(batch_size)
+                    }
+                    
+                    # 发送请求
+                    response = requests.post(url, json=data, stream=True, timeout=300)
+                    
+                    if response.status_code == 200:
+                        # 处理流式响应
+                        output = []
+                        for chunk in response.iter_content(chunk_size=1024):
+                            if chunk:
+                                try:
+                                    line = chunk.decode('utf-8')
+                                    if line.strip():
+                                        import json
+                                        data = json.loads(line)
+                                        if 'status' in data:
+                                            output.append(data['status'])
+                                except:
+                                    pass
+                        
+                        self.add_message("system", "系统", f"模型微调完成: {self.selected_model}")
+                        self.add_message("system", "系统", "\n".join(output))
+                    else:
+                        self.add_message("system", "系统", f"微调失败: {response.status_code}")
+                except Exception as e:
+                    self.add_message("system", "系统", f"微调时出错: {str(e)}")
+            
+            threading.Thread(target=fine_tune_thread, daemon=True).start()
+            window.destroy()
+        
+        start_btn = ctk.CTkButton(
+            window,
+            text="开始微调",
+            command=start_fine_tune,
+            fg_color="#27ae60",
+            hover_color="#2ecc71"
+        )
+        start_btn.grid(row=5, column=0, columnspan=2, padx=20, pady=20, sticky="ew")
 
     def open_pull_model_window(self):
         """打开拉取模型窗口"""
@@ -1479,17 +1863,11 @@ class OllamaChatGUI:
             
             # 更新状态
             self.api_server_enabled = True
-            # 更新主窗口的状态（如果存在）
-            if hasattr(self, 'api_server_status'):
-                self.api_server_status.configure(text=f"API服务状态: 已启动 (端口: {port})", text_color="lightgreen")
             self.add_message("system", "系统", f"API服务已启动，端口: {port}")
             
             # 保存配置
             self.save_config()
         except Exception as e:
-            # 更新主窗口的状态（如果存在）
-            if hasattr(self, 'api_server_status'):
-                self.api_server_status.configure(text=f"API服务状态: 启动失败", text_color="red")
             self.add_message("system", "系统", f"API服务启动失败: {str(e)}")
 
     def stop_api_server(self):
@@ -1497,9 +1875,6 @@ class OllamaChatGUI:
         # 注意：Flask的开发服务器不支持优雅停止
         # 这里我们只是标记为已停止
         self.api_server_enabled = False
-        # 更新主窗口的状态（如果存在）
-        if hasattr(self, 'api_server_status'):
-            self.api_server_status.configure(text="API服务状态: 已停止", text_color="red")
         self.add_message("system", "系统", "API服务已停止")
         self.api_server = None
         
@@ -2189,7 +2564,7 @@ class OllamaChatGUI:
         service_label.grid(row=1, column=0, padx=20, pady=10, sticky="e")
         
         self.service_type_var = ctk.StringVar(value="Ollama")
-        service_types = ["Ollama", "OpenAI兼容API", "Hugging Face", "自定义服务"]
+        service_types = ["Ollama", "OpenAI兼容API", "Hugging Face", "自定义服务", "NOKE服务器"]
         
         service_dropdown = ctk.CTkComboBox(
             window,
@@ -2210,6 +2585,27 @@ class OllamaChatGUI:
         self.port_entry = ctk.CTkEntry(config_frame, width=100)
         self.port_entry.insert(0, "11434")  # 默认Ollama端口
         self.port_entry.grid(row=0, column=1, padx=20, pady=10, sticky="w")
+        
+        # 当服务类型改变时更新端口默认值
+        def on_service_type_change(event):
+            service_type = self.service_type_var.get()
+            if service_type == "Ollama":
+                self.port_entry.delete(0, "end")
+                self.port_entry.insert(0, "11434")
+            elif service_type == "OpenAI兼容API":
+                self.port_entry.delete(0, "end")
+                self.port_entry.insert(0, "8000")
+            elif service_type == "Hugging Face":
+                self.port_entry.delete(0, "end")
+                self.port_entry.insert(0, "8080")
+            elif service_type == "自定义服务":
+                self.port_entry.delete(0, "end")
+                self.port_entry.insert(0, "9000")
+            elif service_type == "NOKE服务器":
+                self.port_entry.delete(0, "end")
+                self.port_entry.insert(0, "48911")  # NOKE主服务器端口
+        
+        service_dropdown.bind("<<ComboboxSelected>>", on_service_type_change)
         
         # 服务状态
         self.service_status = ctk.CTkLabel(config_frame, text="服务状态: 未启动")
@@ -2314,7 +2710,8 @@ class OllamaChatGUI:
             {"name": "Ollama", "desc": "本地AI模型服务", "port": "11434"},
             {"name": "OpenAI兼容API", "desc": "兼容OpenAI接口的服务", "port": "8000"},
             {"name": "Hugging Face", "desc": "Hugging Face模型服务", "port": "8080"},
-            {"name": "自定义服务", "desc": "自定义AI服务", "port": "9000"}
+            {"name": "自定义服务", "desc": "自定义AI服务", "port": "9000"},
+            {"name": "NOKE服务器", "desc": "NOKE多服务器集群", "port": "48911-48915"}
         ]
         
         for i, service in enumerate(service_list):
@@ -2350,9 +2747,6 @@ class OllamaChatGUI:
     def start_local_service(self, service_type, port):
         """启动本地服务"""
         try:
-            import subprocess
-            import os
-            
             # 记录日志
             def log_message(message):
                 if hasattr(self, 'log_text'):
@@ -2364,50 +2758,32 @@ class OllamaChatGUI:
             
             log_message(f"开始启动服务: {service_type} (端口: {port})")
             
-            if service_type == "Ollama":
-                # 检查Ollama是否安装
-                try:
-                    result = subprocess.run(["ollama", "--version"], capture_output=True, text=True, timeout=10)
-                    if result.returncode != 0:
-                        return False, "Ollama未安装，请先安装Ollama"
-                except:
-                    return False, "Ollama未安装或不在PATH中"
+            # 映射服务类型到setup_manager支持的服务
+            service_map = {
+                "Ollama": "ollama",
+                "OpenAI兼容API": "openai",
+                "Hugging Face": "anthropic",  # 暂时映射到anthropic
+                "自定义服务": "openai"  # 暂时映射到openai
+            }
+            
+            if service_type in service_map:
+                service_name = service_map[service_type]
                 
-                # 启动Ollama服务（Ollama通常作为系统服务运行）
-                log_message("检查Ollama服务状态...")
-                try:
-                    # 尝试获取模型列表，验证服务是否运行
-                    import requests
-                    response = requests.get(f"http://localhost:{port}/api/tags", timeout=5)
-                    if response.status_code == 200:
-                        return True, f"Ollama服务已在端口 {port} 运行"
-                except:
-                    pass
+                # 设置端口映射
+                self.setup_manager.set_port_mapping(service_name, port)
                 
-                # 尝试启动Ollama服务
-                log_message("尝试启动Ollama服务...")
-                try:
-                    # Ollama在Windows上通常通过系统服务运行
-                    # 这里我们只是检查并返回状态
-                    return True, f"Ollama服务配置为端口 {port}"
-                except Exception as e:
-                    return False, f"启动Ollama服务失败: {str(e)}"
-            
-            elif service_type == "OpenAI兼容API":
-                # 这里可以添加启动OpenAI兼容API服务的逻辑
-                log_message("配置OpenAI兼容API服务...")
-                return True, f"OpenAI兼容API服务配置为端口 {port}"
-            
-            elif service_type == "Hugging Face":
-                # 这里可以添加启动Hugging Face服务的逻辑
-                log_message("配置Hugging Face服务...")
-                return True, f"Hugging Face服务配置为端口 {port}"
-            
-            elif service_type == "自定义服务":
-                # 这里可以添加启动自定义服务的逻辑
-                log_message("配置自定义服务...")
-                return True, f"自定义服务配置为端口 {port}"
-            
+                # 启动服务
+                result = self.setup_manager.start_service(service_name)
+                if result['success']:
+                    log_message(f"服务启动成功: {service_type}")
+                    return True, result['message']
+                else:
+                    log_message(f"服务启动失败: {result['message']}")
+                    return False, result['message']
+            elif service_type == "NOKE服务器":
+                # 启动NOKE服务器集群
+                log_message("启动NOKE服务器集群...")
+                return self.start_noke_servers()
             else:
                 return False, "不支持的服务类型"
                 
@@ -2417,8 +2793,6 @@ class OllamaChatGUI:
     def stop_local_service(self, service_type):
         """停止本地服务"""
         try:
-            import subprocess
-            
             # 记录日志
             def log_message(message):
                 if hasattr(self, 'log_text'):
@@ -2430,31 +2804,510 @@ class OllamaChatGUI:
             
             log_message(f"开始停止服务: {service_type}")
             
-            if service_type == "Ollama":
-                # Ollama通常作为系统服务运行，这里只是返回状态
-                log_message("Ollama服务管理建议: 使用系统服务管理器停止")
-                return True, "Ollama服务管理提示已显示"
+            # 映射服务类型到setup_manager支持的服务
+            service_map = {
+                "Ollama": "ollama",
+                "OpenAI兼容API": "openai",
+                "Hugging Face": "anthropic",  # 暂时映射到anthropic
+                "自定义服务": "openai"  # 暂时映射到openai
+            }
             
-            elif service_type == "OpenAI兼容API":
-                # 这里可以添加停止OpenAI兼容API服务的逻辑
-                log_message("停止OpenAI兼容API服务...")
-                return True, "OpenAI兼容API服务已停止"
-            
-            elif service_type == "Hugging Face":
-                # 这里可以添加停止Hugging Face服务的逻辑
-                log_message("停止Hugging Face服务...")
-                return True, "Hugging Face服务已停止"
-            
-            elif service_type == "自定义服务":
-                # 这里可以添加停止自定义服务的逻辑
-                log_message("停止自定义服务...")
-                return True, "自定义服务已停止"
-            
+            if service_type in service_map:
+                service_name = service_map[service_type]
+                
+                # 停止服务
+                result = self.setup_manager.stop_service(service_name)
+                if result['success']:
+                    log_message(f"服务停止成功: {service_type}")
+                    return True, result['message']
+                else:
+                    log_message(f"服务停止失败: {result['message']}")
+                    return False, result['message']
+            elif service_type == "NOKE服务器":
+                # 停止NOKE服务器集群
+                log_message("停止NOKE服务器集群...")
+                return self.stop_noke_servers()
             else:
                 return False, "不支持的服务类型"
                 
         except Exception as e:
             return False, str(e)
+    
+    def start_noke_servers(self):
+        """启动NOKE服务器集群"""
+        try:
+            # 记录日志
+            def log_message(message):
+                if hasattr(self, 'log_text'):
+                    self.log_text.configure(state="normal")
+                    self.log_text.insert("end", f"[{time.strftime('%H:%M:%S')}] {message}\n")
+                    self.log_text.see("end")
+                    self.log_text.configure(state="disabled")
+                print(f"[{time.strftime('%H:%M:%S')}] {message}")
+            
+            # 启动顺序：memory -> agent -> monitor -> main
+            
+            # 启动记忆服务器
+            if self.servers['memory'] is None:
+                log_message("启动记忆服务器...")
+                self.servers['memory'] = MemoryServer()
+                self.servers['memory'].start()
+                time.sleep(1)
+            
+            # 启动智能体服务器
+            if self.servers['agent'] is None:
+                log_message("启动智能体服务器...")
+                self.servers['agent'] = AgentServer()
+                self.servers['agent'].start()
+                time.sleep(1)
+            
+            # 启动监控服务器
+            if self.servers['monitor'] is None:
+                log_message("启动监控服务器...")
+                self.servers['monitor'] = MonitorServer()
+                self.servers['monitor'].start()
+                time.sleep(1)
+            
+            # 启动主服务器
+            if self.servers['main'] is None:
+                log_message("启动主服务器...")
+                self.servers['main'] = MainServer()
+                self.servers['main'].start()
+                time.sleep(1)
+            
+            log_message("NOKE服务器集群启动完成")
+            return True, "NOKE服务器集群启动成功"
+        except Exception as e:
+            log_message(f"启动NOKE服务器集群失败: {str(e)}")
+            return False, f"启动NOKE服务器集群失败: {str(e)}"
+    
+    def stop_noke_servers(self):
+        """停止NOKE服务器集群"""
+        try:
+            # 记录日志
+            def log_message(message):
+                if hasattr(self, 'log_text'):
+                    self.log_text.configure(state="normal")
+                    self.log_text.insert("end", f"[{time.strftime('%H:%M:%S')}] {message}\n")
+                    self.log_text.see("end")
+                    self.log_text.configure(state="disabled")
+                print(f"[{time.strftime('%H:%M:%S')}] {message}")
+            
+            # 停止顺序：main -> monitor -> agent -> memory
+            
+            # 停止主服务器
+            if self.servers['main']:
+                log_message("停止主服务器...")
+                self.servers['main'].stop()
+                self.servers['main'] = None
+                time.sleep(0.5)
+            
+            # 停止监控服务器
+            if self.servers['monitor']:
+                log_message("停止监控服务器...")
+                self.servers['monitor'].stop()
+                self.servers['monitor'] = None
+                time.sleep(0.5)
+            
+            # 停止智能体服务器
+            if self.servers['agent']:
+                log_message("停止智能体服务器...")
+                self.servers['agent'].stop()
+                self.servers['agent'] = None
+                time.sleep(0.5)
+            
+            # 停止记忆服务器
+            if self.servers['memory']:
+                log_message("停止记忆服务器...")
+                self.servers['memory'].stop()
+                self.servers['memory'] = None
+                time.sleep(0.5)
+            
+            log_message("NOKE服务器集群停止完成")
+            return True, "NOKE服务器集群停止成功"
+        except Exception as e:
+            log_message(f"停止NOKE服务器集群失败: {str(e)}")
+            return False, f"停止NOKE服务器集群失败: {str(e)}"
+    
+    def start_single_server(self, server_key, port):
+        """启动单个服务器"""
+        try:
+            print(f"启动{server_key}服务器，端口: {port}...")
+            
+            # 停止之前的服务器实例
+            if self.servers[server_key]:
+                print(f"停止之前的{server_key}服务器实例...")
+                self.servers[server_key].stop()
+                self.servers[server_key] = None
+                time.sleep(0.5)
+            
+            # 根据服务器类型启动不同的服务器
+            if server_key == 'main':
+                from servers.main_server import MainServer
+                self.servers[server_key] = MainServer()
+            elif server_key == 'memory':
+                from servers.memory_server import MemoryServer
+                self.servers[server_key] = MemoryServer()
+            elif server_key == 'agent':
+                from servers.agent_server import AgentServer
+                self.servers[server_key] = AgentServer()
+            elif server_key == 'monitor':
+                from servers.monitor_server import MonitorServer
+                self.servers[server_key] = MonitorServer()
+            
+            # 启动服务器
+            if self.servers[server_key]:
+                # 这里可以添加端口设置逻辑
+                # 目前服务器使用配置文件中的端口
+                self.servers[server_key].start()
+                print(f"{server_key}服务器启动成功，端口: {port}")
+            else:
+                print(f"无法启动{server_key}服务器")
+                
+        except Exception as e:
+            print(f"启动{server_key}服务器失败: {str(e)}")
+    
+    def stop_single_server(self, server_key):
+        """停止单个服务器"""
+        try:
+            print(f"停止{server_key}服务器...")
+            
+            if self.servers[server_key]:
+                self.servers[server_key].stop()
+                self.servers[server_key] = None
+                print(f"{server_key}服务器停止成功")
+            else:
+                print(f"{server_key}服务器未运行")
+                
+        except Exception as e:
+            print(f"停止{server_key}服务器失败: {str(e)}")
+    
+    def start_server_mode(self):
+        """启动服务器模式，关闭之前的所有控制台，启动服务器专用的专业控制台"""
+
+        try:
+            print("启动服务器模式...")
+            
+            # 关闭之前的所有控制台
+            if hasattr(self, 'window'):
+                print("关闭当前控制台...")
+                # 保存设置
+                self.save_config()
+                self.save_api_keys()
+                # 停止所有服务
+                self.stop_api_server()
+                self.stop_noke_servers()
+                # 关闭窗口
+                self.window.destroy()
+                del self.window
+            
+            # 启动NOKE服务器集群
+            print("启动NOKE服务器集群...")
+            success, message = self.start_noke_servers()
+            if not success:
+                print(f"启动NOKE服务器集群失败: {message}")
+                return
+            
+            # 创建服务器专用的专业控制台
+            print("创建服务器专用的专业控制台...")
+            
+            # 初始化服务器模式窗口
+            server_window = ctk.CTk()
+            server_window.title("NOKE服务器控制台")
+            server_window.geometry("1000x700")
+            server_window.minsize(800, 500)
+            
+            # 设置窗口布局
+            server_window.grid_columnconfigure(0, weight=1)
+            server_window.grid_rowconfigure(0, weight=1)
+            
+            # 创建主框架
+            main_frame = ctk.CTkFrame(server_window, corner_radius=0)
+            main_frame.grid(row=0, column=0, sticky="nsew")
+            main_frame.grid_columnconfigure(0, weight=1)
+            main_frame.grid_rowconfigure(1, weight=1)
+            
+            # 创建标题栏
+            title_frame = ctk.CTkFrame(main_frame, fg_color="#34495e")
+            title_frame.grid(row=0, column=0, sticky="ew")
+            title_frame.grid_columnconfigure(0, weight=1)
+            title_frame.grid_columnconfigure(1, weight=0)
+            
+            title_label = ctk.CTkLabel(
+                title_frame,
+                text="NOKE服务器控制台",
+                font=ctk.CTkFont(size=18, weight="bold"),
+                text_color="white"
+            )
+            title_label.grid(row=0, column=0, padx=20, pady=15, sticky="w")
+            
+            # 总启动/关闭开关
+            control_frame = ctk.CTkFrame(title_frame, fg_color="transparent")
+            control_frame.grid(row=0, column=1, padx=20, pady=15, sticky="e")
+            
+            start_all_btn = ctk.CTkButton(
+                control_frame,
+                text="总启动",
+                command=lambda: self.start_noke_servers(),
+                fg_color="#27ae60",
+                hover_color="#229954",
+                width=80
+            )
+            start_all_btn.pack(side="left", padx=(0, 10))
+            
+            stop_all_btn = ctk.CTkButton(
+                control_frame,
+                text="总关闭",
+                command=lambda: self.stop_noke_servers(),
+                fg_color="#e74c3c",
+                hover_color="#c0392b",
+                width=80
+            )
+            stop_all_btn.pack(side="left")
+            
+            # 创建标签页
+            tabview = ctk.CTkTabview(main_frame, corner_radius=10)
+            tabview.grid(row=1, column=0, padx=20, pady=20, sticky="nsew")
+            
+            # 服务器管理标签
+            server_tab = tabview.add("服务器管理")
+            server_tab.grid_columnconfigure(0, weight=1)
+            server_tab.grid_rowconfigure(0, weight=1)
+            
+            # 外调控制台标签
+            external_tab = tabview.add("外调控制台")
+            external_tab.grid_columnconfigure(0, weight=1)
+            external_tab.grid_rowconfigure(0, weight=1)
+            
+            # 服务控制台标签
+            service_tab = tabview.add("服务控制台")
+            service_tab.grid_columnconfigure(0, weight=1)
+            service_tab.grid_rowconfigure(0, weight=1)
+            
+            # 服务器管理标签内容
+            server_canvas = ctk.CTkCanvas(server_tab, bg="#2c3e50", highlightthickness=0)
+            server_scrollbar = ctk.CTkScrollbar(server_tab, orientation="vertical", command=server_canvas.yview)
+            server_scrollable_frame = ctk.CTkFrame(server_canvas, bg_color="#2c3e50")
+            
+            server_scrollable_frame.bind(
+                "<Configure>",
+                lambda e: server_canvas.configure(
+                    scrollregion=server_canvas.bbox("all")
+                )
+            )
+            
+            server_canvas.create_window((0, 0), window=server_scrollable_frame, anchor="nw")
+            server_canvas.configure(yscrollcommand=server_scrollbar.set)
+            
+            server_canvas.grid(row=0, column=0, sticky="nsew")
+            server_scrollbar.grid(row=0, column=1, sticky="ns")
+            server_tab.grid_rowconfigure(0, weight=1)
+            server_tab.grid_columnconfigure(0, weight=1)
+            
+            # 创建服务器列表
+            servers = [
+                {"name": "主服务器", "key": "main", "port": 48911},
+                {"name": "记忆服务器", "key": "memory", "port": 48912},
+                {"name": "监控服务器", "key": "monitor", "port": 48913},
+                {"name": "智能体服务器", "key": "agent", "port": 48915}
+            ]
+            
+            for i, server_info in enumerate(servers):
+                server_frame = ctk.CTkFrame(server_scrollable_frame, corner_radius=8, border_width=1, border_color="#3498db")
+                server_frame.grid(row=i, column=0, padx=10, pady=10, sticky="ew")
+                
+                server_name = ctk.CTkLabel(
+                    server_frame,
+                    text=f"{server_info['name']} (端口: {server_info['port']})",
+                    font=ctk.CTkFont(size=12, weight="bold")
+                )
+                server_name.pack(padx=15, pady=10, anchor="w")
+                
+                # 启动/停止按钮
+                def create_server_controls(server_key, server_name, port):
+                    control_frame = ctk.CTkFrame(server_frame, fg_color="transparent")
+                    control_frame.pack(padx=15, pady=(0, 10), fill="x")
+                    
+                    # 端口配置
+                    port_label = ctk.CTkLabel(control_frame, text="端口:", width=50)
+                    port_label.grid(row=0, column=0, padx=(0, 10), pady=5, sticky="w")
+                    
+                    port_var = ctk.StringVar(value=str(port))
+                    port_entry = ctk.CTkEntry(control_frame, textvariable=port_var, width=100)
+                    port_entry.grid(row=0, column=1, padx=(0, 10), pady=5, sticky="w")
+                    
+                    # 启动按钮
+                    start_btn = ctk.CTkButton(
+                        control_frame,
+                        text="启动",
+                        command=lambda sk=server_key, p=port_var: self.start_single_server(sk, int(p.get())),
+                        width=80,
+                        fg_color="#27ae60",
+                        hover_color="#229954"
+                    )
+                    start_btn.grid(row=0, column=2, padx=(0, 10), pady=5, sticky="w")
+                    
+                    # 停止按钮
+                    stop_btn = ctk.CTkButton(
+                        control_frame,
+                        text="停止",
+                        command=lambda sk=server_key: self.stop_single_server(sk),
+                        width=80,
+                        fg_color="#e74c3c",
+                        hover_color="#c0392b"
+                    )
+                    stop_btn.grid(row=0, column=3, padx=(0, 10), pady=5, sticky="w")
+                    
+                    # 状态标签
+                    status_var = ctk.StringVar(value="状态: 未启动")
+                    status_label = ctk.CTkLabel(control_frame, textvariable=status_var)
+                    status_label.grid(row=0, column=4, padx=(10, 0), pady=5, sticky="w")
+                    
+                    # 定期更新状态
+                    def update_status():
+                        if hasattr(self, 'servers') and self.servers[server_key]:
+                            status_var.set("状态: 运行中")
+                        else:
+                            status_var.set("状态: 未启动")
+                        server_window.after(2000, update_status)
+                    
+                    update_status()
+                
+                create_server_controls(server_info['key'], server_info['name'], server_info['port'])
+            
+            # 外调控制台标签内容
+            external_canvas = ctk.CTkCanvas(external_tab, bg="#2c3e50", highlightthickness=0)
+            external_scrollbar = ctk.CTkScrollbar(external_tab, orientation="vertical", command=external_canvas.yview)
+            external_scrollable_frame = ctk.CTkFrame(external_canvas, bg_color="#2c3e50")
+            
+            external_scrollable_frame.bind(
+                "<Configure>",
+                lambda e: external_canvas.configure(
+                    scrollregion=external_canvas.bbox("all")
+                )
+            )
+            
+            external_canvas.create_window((0, 0), window=external_scrollable_frame, anchor="nw")
+            external_canvas.configure(yscrollcommand=external_scrollbar.set)
+            
+            external_canvas.grid(row=0, column=0, sticky="nsew")
+            external_scrollbar.grid(row=0, column=1, sticky="ns")
+            external_tab.grid_rowconfigure(0, weight=1)
+            external_tab.grid_columnconfigure(0, weight=1)
+            
+            # 外调控制台内容
+            external_title = ctk.CTkLabel(
+                external_scrollable_frame,
+                text="外调管理",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            external_title.pack(padx=20, pady=20, anchor="w")
+            
+            # 这里可以添加外调控制台的具体内容
+            # 例如API密钥管理、向外调用配置等
+            
+            # 服务控制台标签内容
+            service_canvas = ctk.CTkCanvas(service_tab, bg="#2c3e50", highlightthickness=0)
+            service_scrollbar = ctk.CTkScrollbar(service_tab, orientation="vertical", command=service_canvas.yview)
+            service_scrollable_frame = ctk.CTkFrame(service_canvas, bg_color="#2c3e50")
+            
+            service_scrollable_frame.bind(
+                "<Configure>",
+                lambda e: service_canvas.configure(
+                    scrollregion=service_canvas.bbox("all")
+                )
+            )
+            
+            service_canvas.create_window((0, 0), window=service_scrollable_frame, anchor="nw")
+            service_canvas.configure(yscrollcommand=service_scrollbar.set)
+            
+            service_canvas.grid(row=0, column=0, sticky="nsew")
+            service_scrollbar.grid(row=0, column=1, sticky="ns")
+            service_tab.grid_rowconfigure(0, weight=1)
+            service_tab.grid_columnconfigure(0, weight=1)
+            
+            # 服务控制台内容
+            service_title = ctk.CTkLabel(
+                service_scrollable_frame,
+                text="服务管理",
+                font=ctk.CTkFont(size=16, weight="bold")
+            )
+            service_title.pack(padx=20, pady=20, anchor="w")
+            
+            # 这里可以添加服务控制台的具体内容
+            # 例如本地服务搭建、服务状态监控等
+            
+            # 创建日志区域
+            log_frame = ctk.CTkFrame(main_frame, corner_radius=10)
+            log_frame.grid(row=2, column=0, padx=20, pady=(0, 20), sticky="nsew")
+            log_frame.grid_rowconfigure(1, weight=1)
+            
+            log_title = ctk.CTkLabel(
+                log_frame,
+                text="服务器日志",
+                font=ctk.CTkFont(size=14, weight="bold")
+            )
+            log_title.pack(padx=15, pady=10, anchor="w")
+            
+            log_text = scrolledtext.ScrolledText(
+                log_frame,
+                wrap="word",
+                bg="#2c3e50",
+                fg="white",
+                font=("Consolas", 10)
+            )
+            log_text.pack(fill="both", expand=True, padx=15, pady=(0, 15))
+            
+            # 重定向print输出到日志
+            original_print = print
+            
+            def log_print(*args, **kwargs):
+                text = " ".join(str(arg) for arg in args)
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                log_entry = f"[{timestamp}] {text}\n"
+                log_text.insert("end", log_entry)
+                log_text.see("end")
+                original_print(*args, **kwargs)
+            
+            import builtins
+            builtins.print = log_print
+            
+            # 启动服务器状态监控
+            def monitor_servers():
+                print("监控服务器状态...")
+                for server_key, server in self.servers.items():
+                    if server:
+                        print(f"{server_key} 服务器运行中")
+                    else:
+                        print(f"{server_key} 服务器未运行")
+                server_window.after(5000, monitor_servers)
+            
+            monitor_servers()
+            
+            # 绑定窗口关闭事件
+            def on_server_window_close():
+                print("关闭服务器控制台...")
+                # 停止所有服务器
+                self.stop_noke_servers()
+                # 恢复原始print函数
+                builtins.print = original_print
+                # 关闭窗口
+                server_window.destroy()
+                # 返回初始控制台
+                print("返回初始控制台...")
+                # 重新创建初始控制台窗口
+                self.initialize_window()
+                # 运行初始控制台
+                self.run()
+            
+            server_window.protocol("WM_DELETE_WINDOW", on_server_window_close)
+            
+            # 运行服务器控制台
+            print("服务器模式启动成功！")
+            server_window.mainloop()
+            
+        except Exception as e:
+            print(f"启动服务器模式失败: {str(e)}")
 
     def open_external_call_console(self):
         """打开向外调用管理控制台"""
@@ -4571,7 +5424,7 @@ class OllamaChatGUI:
                 "total_calls": sum(stats.get("total_calls", 0) for stats in self.api_key_stats.values()),
                 "today_calls": sum(stats.get("calls_today", 0) for stats in self.api_key_stats.values()),
                 "active_api_keys": len([key for key, stats in self.api_key_stats.items() if stats.get("total_calls", 0) > 0]),
-                "api_server_status": "运行中" if self.api_server_enabled else "已停止",
+
                 "api_key_stats": self.api_key_stats
             }
             

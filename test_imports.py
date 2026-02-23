@@ -1,99 +1,44 @@
 #!/usr/bin/env python3
-"""
-测试所有导入是否正常
-"""
+"""测试导入是否成功"""
 
-print("开始测试导入...")
+import sys
+import os
 
-# 测试核心模块
-try:
-    import customtkinter as ctk
-    print("✓ customtkinter 导入成功")
-except Exception as e:
-    print(f"✗ customtkinter 导入失败: {e}")
+# 添加项目根目录到Python路径
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    import threading
-    print("✓ threading 导入成功")
+    print("测试导入main模块...")
+    import main
+    print("✓ main模块导入成功")
+    
+    print("测试创建OllamaChatGUI实例...")
+    app = main.OllamaChatGUI()
+    print("✓ OllamaChatGUI实例创建成功")
+    
+    print("测试本地搭建管理器...")
+    if hasattr(app, 'setup_manager'):
+        print("✓ 本地搭建管理器初始化成功")
+    else:
+        print("✗ 本地搭建管理器未初始化")
+    
+    print("测试服务器实例...")
+    if hasattr(app, 'servers'):
+        print("✓ 服务器实例初始化成功")
+        print(f"  服务器列表: {list(app.servers.keys())}")
+    else:
+        print("✗ 服务器实例未初始化")
+    
+    print("测试配置保存...")
+    try:
+        app.save_config()
+        print("✓ 配置保存成功")
+    except Exception as e:
+        print(f"✗ 配置保存失败: {e}")
+    
+    print("\n所有测试完成！")
+    
 except Exception as e:
-    print(f"✗ threading 导入失败: {e}")
-
-try:
-    import time
-    print("✓ time 导入成功")
-except Exception as e:
-    print(f"✗ time 导入失败: {e}")
-
-try:
-    from tkinter import scrolledtext
-    print("✓ scrolledtext 导入成功")
-except Exception as e:
-    print(f"✗ scrolledtext 导入失败: {e}")
-
-try:
-    import requests
-    print("✓ requests 导入成功")
-except Exception as e:
-    print(f"✗ requests 导入失败: {e}")
-
-try:
-    from typing import List, Dict
-    print("✓ typing 导入成功")
-except Exception as e:
-    print(f"✗ typing 导入失败: {e}")
-
-try:
-    import flask
-    print("✓ flask 导入成功")
-except Exception as e:
-    print(f"✗ flask 导入失败: {e}")
-
-try:
-    import json
-    print("✓ json 导入成功")
-except Exception as e:
-    print(f"✗ json 导入失败: {e}")
-
-try:
-    import os
-    print("✓ os 导入成功")
-except Exception as e:
-    print(f"✗ os 导入失败: {e}")
-
-try:
-    import uuid
-    print("✓ uuid 导入成功")
-except Exception as e:
-    print(f"✗ uuid 导入失败: {e}")
-
-try:
-    from datetime import datetime, timedelta
-    print("✓ datetime 导入成功")
-except Exception as e:
-    print(f"✗ datetime 导入失败: {e}")
-
-try:
-    import configparser
-    print("✓ configparser 导入成功")
-except Exception as e:
-    print(f"✗ configparser 导入失败: {e}")
-
-try:
-    from collections import deque
-    print("✓ deque 导入成功")
-except Exception as e:
-    print(f"✗ deque 导入失败: {e}")
-
-try:
-    import gc
-    print("✓ gc 导入成功")
-except Exception as e:
-    print(f"✗ gc 导入失败: {e}")
-
-try:
-    import psutil
-    print(f"✓ psutil 导入成功，版本: {psutil.__version__}")
-except Exception as e:
-    print(f"✗ psutil 导入失败: {e}")
-
-print("\n所有导入测试完成！")
+    print(f"✗ 测试失败: {e}")
+    import traceback
+    traceback.print_exc()

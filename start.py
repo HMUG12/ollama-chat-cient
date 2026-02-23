@@ -16,7 +16,8 @@ REQUIREMENTS = [
     "psutil>=5.9.0",
     "pyttsx3>=2.90",
     "websocket-client>=1.8.0",
-    "jieba>=0.42.1"
+    "jieba>=0.42.1",
+    "pyperclip>=1.8.2"
 ]
 
 # 主应用文件
